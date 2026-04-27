@@ -28,6 +28,7 @@ A lightweight TypeScript Backend-for-Frontend framework built around three core 
 ## Architecture
 
 ```
+package.json                 workspace root — orchestrates server + client
 server/                      BACKEND
   src/
     core/
@@ -98,11 +99,8 @@ This starts Postgres and the app. The API is available at `http://localhost:3000
 ### 3. Run migrations
 
 ```bash
-# generate SQL from schema
-docker-compose exec app npm run db:generate
-
-# apply to database
-docker-compose exec app npm run db:migrate
+npm run db:generate
+npm run db:migrate
 ```
 
 ### 4. Health check
