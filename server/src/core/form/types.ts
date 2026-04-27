@@ -8,9 +8,21 @@ export type FormResult<T> =
   | { state: 'updated'; data: T }
   | { state: 'error';   errors: Record<string, string[]> }
 
+export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
+
+export interface FieldMeta {
+  name: string
+  label: string
+  type: FieldType
+  placeholder?: string
+  required?: boolean
+  options?: { value: string; label: string }[]
+}
+
 export interface BuiltForm<TInput> {
   schema: z.ZodType<TInput>
   uniqueChecks: UniqueCheck[]
+  toFieldConfigs(): FieldMeta[]
 }
 
 export interface UniqueCheck {

@@ -222,14 +222,34 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
 
 ```ts
 new FormBuilder<MyInput>()
-  .field('name').required().maxLength(100)
-  .field('email').required().isEmail().isUnique('table', 'column')
-  .field('age').isNumber().min(0).max(120)
-  .field('role').isEnum(['admin', 'user'])
-  .field('website').optional().isUrl()
-  .field('bio').optional().maxLength(500)
+  .field('name').label('Full name').required().maxLength(100)
+  .field('email').label('Email').required().isEmail().isUnique('users', 'email')
+  .field('age').label('Age').isNumber().min(0).max(120)
+  .field('role').label('Role').isEnum(['admin', 'user'])
+  .field('website').label('Website').optional().isUrl()
+  .field('bio').label('Bio').optional().asTextarea().maxLength(500)
   .build()
 ```
+
+Each field automatically exposes a `GET /:resource/schema` endpoint that returns the field metadata — labels, placeholders, types — so the frontend can render the form without any hardcoded config (see [Schema endpoint](#schema-endpoint) below).
+
+---
+
+## Schema Endpoint
+
+Every registered resource automatically gets a `GET /:resource/schema` endpoint that returns the form field definitions — labels, placeholders, types, required flags — derived directly from the backend `FormBuilder`.
+
+```bash
+GET /companies/schema
+# → { "ok": true, "data": [
+#     { "name": "name",     "label": "Company name", "type": "text",  "required": true },
+#     { "name": "nip",      "label": "NIP",          "type": "text",  "placeholder": "000-000-00-00" },
+#     { "name": "city",     "label": "City",         "type": "text" },
+#     ...
+#   ]}
+```
+
+The frontend `FormEngine` fetches this schema automatically on init — no hardcoded field configs needed on the frontend.
 
 ---
 
@@ -237,13 +257,14 @@ new FormBuilder<MyInput>()
 
 ### FormEngine (pure TypeScript)
 
-The engine owns all logic and has no React dependency — it can be used headlessly or wrapped by any other framework.
+The engine fetches the form schema from `/:endpoint/schema` on init, then owns submit logic, state machine, and error mapping. No React dependency.
 
 ```ts
 const engine = new FormEngine<CompanyInsert>({
   endpoint: '/companies',
   onSuccess: (data, mode) => console.log(mode, data), // mode: 'created' | 'updated'
   onError: (errors) => console.error(errors),
+  // fields: [...] — optional static override, skips schema fetch
 })
 
 engine.load(existingCompany)   // pre-populate for edit (auto-switches to PUT /:id)
@@ -255,7 +276,7 @@ engine.reset()                 // back to idle
 
 ```tsx
 function MyForm() {
-  const { engine, state, errors, isSubmitting } = useFormEngine<CompanyInsert>({
+  const { engine, state } = useFormEngine<CompanyInsert>({
     endpoint: '/companies',
     onSuccess: () => navigate('/companies'),
   })
@@ -263,22 +284,8 @@ function MyForm() {
   // pre-populate for edit
   useEffect(() => { engine.load(existingCompany) }, [engine])
 
-  return <FormController fields={companyFields} engine={engine} />
-}
-```
-
-### FieldConfig types
-
-```ts
-type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
-
-interface FieldConfig {
-  name: string
-  label: string
-  type: FieldType
-  placeholder?: string
-  required?: boolean
-  options?: { value: string; label: string }[]  // for select
+  // FormController fetches schema automatically — no fields prop needed
+  return <FormController engine={engine} />
 }
 ```
 

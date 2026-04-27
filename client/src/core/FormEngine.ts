@@ -1,17 +1,35 @@
-import type { ApiResponse, FormEngineConfig, FormState } from './types.js'
+import type { ApiResponse, FieldConfig, FormEngineConfig, FormState } from './types.js'
 
 export class FormEngine<T extends { id?: number }> {
   state: FormState = 'idle'
   errors: Record<string, string[]> = {}
   values: Partial<T> = {}
+  fields: FieldConfig[] = []
 
   private readonly config: FormEngineConfig<T>
   private listeners = new Set<() => void>()
 
   constructor(config: FormEngineConfig<T>) {
     this.config = config
-    if (config) {
-      // initialValues support via load()
+    if (config.fields) {
+      this.fields = config.fields
+    } else {
+      this.fetchSchema()
+    }
+  }
+
+  private async fetchSchema(): Promise<void> {
+    try {
+      const res  = await fetch(`${this.config.endpoint}/schema`)
+      const json = await res.json() as ApiResponse<FieldConfig[]>
+      if (json.ok) {
+        this.fields = json.data
+        this.notify()
+      }
+    } catch {
+      this.errors = { _root: ['Failed to load form schema'] }
+      this.state  = 'error'
+      this.notify()
     }
   }
 
@@ -30,7 +48,7 @@ export class FormEngine<T extends { id?: number }> {
   }
 
   reset(): void {
-    this.state = 'idle'
+    this.state  = 'idle'
     this.errors = {}
     this.values = {}
     this.notify()
@@ -39,21 +57,20 @@ export class FormEngine<T extends { id?: number }> {
   async submit(formValues: T): Promise<void> {
     if (this.state === 'submitting') return
 
-    this.state = 'submitting'
+    this.state  = 'submitting'
     this.errors = {}
     this.notify()
 
-    const id = (formValues as Record<string, unknown>)['id'] as number | undefined
+    const id       = (formValues as Record<string, unknown>)['id'] as number | undefined
     const endpoint = id ? `${this.config.endpoint}/${id}` : this.config.endpoint
     const method   = id ? 'PUT' : 'POST'
 
     try {
-      const res = await fetch(endpoint, {
+      const res  = await fetch(endpoint, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formValues),
       })
-
       const json = await res.json() as ApiResponse<T>
 
       if (json.ok) {

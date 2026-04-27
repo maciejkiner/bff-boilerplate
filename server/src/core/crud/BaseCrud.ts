@@ -47,4 +47,8 @@ export abstract class BaseCrud<
     await this.model.delete(id)
     return ctx.json(ok(null))
   }
+
+  async schema(ctx: Context): Promise<Response> {
+    return ctx.json(ok(this.form.toFieldConfigs()))
+  }
 }

@@ -2,7 +2,6 @@ import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useFormEngine } from './react/useFormEngine.js'
 import { FormController } from './react/FormController.js'
-import { companyFields } from './resources/companies/form.js'
 
 // Example company for edit mode — remove to test create mode
 const existingCompany = {
@@ -28,7 +27,7 @@ function App() {
       <h1>{existingCompany ? 'Edit Company' : 'New Company'}</h1>
       {state === 'created' && <p className="success">Company created!</p>}
       {state === 'updated' && <p className="success">Company updated!</p>}
-      <FormController fields={companyFields} engine={engine} />
+      <FormController engine={engine} />
     </main>
   )
 }

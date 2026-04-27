@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { FieldConfig } from '../core/types.js'
 import type { FormEngine } from '../core/FormEngine.js'
 import { useFormEngine } from './useFormEngine.js'
 import { TextField } from './fields/TextField.js'
@@ -8,19 +7,16 @@ import { SelectField } from './fields/SelectField.js'
 import { CheckboxField } from './fields/CheckboxField.js'
 
 interface Props<T extends { id?: number }> {
-  fields: FieldConfig[]
   engine: FormEngine<T>
   submitLabel?: string
 }
 
 export function FormController<T extends { id?: number }>({
-  fields,
   engine,
   submitLabel = 'Save',
 }: Props<T>) {
-  const { errors, isSubmitting } = useFormEngine<T>(engine as any)
+  const { fields, errors, isSubmitting, state } = useFormEngine<T>(engine)
 
-  // Local controlled state — initialised from engine.values
   const [values, setValues] = useState<Record<string, unknown>>(
     () => ({ ...(engine.values as Record<string, unknown>) })
   )
@@ -31,6 +27,11 @@ export function FormController<T extends { id?: number }>({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     engine.submit(values as T)
+  }
+
+  // Schema not yet loaded
+  if (fields.length === 0 && state !== 'error') {
+    return <div className="form-loading">Loading form…</div>
   }
 
   const rootError = errors['_root']?.[0]

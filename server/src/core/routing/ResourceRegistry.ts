@@ -18,11 +18,12 @@ export class ResourceRegistry {
       const resource = new Ctor()
       const base = `/${path}`
 
-      app.get(base,          ctx => resource.list(ctx))
-      app.get(`${base}/:id`, ctx => resource.get(ctx))
-      app.post(base,         ctx => resource.create(ctx))
-      app.put(`${base}/:id`, ctx => resource.update(ctx))
-      app.delete(`${base}/:id`, ctx => resource.delete(ctx))
+      app.get(`${base}/schema`,  ctx => resource.schema(ctx))
+      app.get(base,              ctx => resource.list(ctx))
+      app.get(`${base}/:id`,     ctx => resource.get(ctx))
+      app.post(base,             ctx => resource.create(ctx))
+      app.put(`${base}/:id`,     ctx => resource.update(ctx))
+      app.delete(`${base}/:id`,  ctx => resource.delete(ctx))
     }
   }
 }
