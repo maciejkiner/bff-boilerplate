@@ -1,4 +1,8 @@
 node_modules
-dist
+server/node_modules
+server/dist
+client/node_modules
+client/dist/app.js
+client/dist/app.js.map
 .env
 drizzle

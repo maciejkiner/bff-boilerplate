@@ -2,13 +2,20 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+# Install server deps
+COPY server/package*.json ./server/
+RUN cd server && npm install
 
+# Install client deps
+COPY client/package*.json ./client/
+RUN cd client && npm install
+
+# Copy source
 COPY . .
 
-RUN npm run build
+# Build server + client
+RUN cd server && npm run build && cd ../client && npm run build
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "server/dist/index.js"]

@@ -6,6 +6,7 @@ A lightweight TypeScript Backend-for-Frontend framework built around three core 
 
 ## Tech Stack
 
+### Backend
 | Layer | Library |
 |---|---|
 | HTTP / Routing | [Hono](https://hono.dev) |
@@ -15,22 +16,42 @@ A lightweight TypeScript Backend-for-Frontend framework built around three core 
 | Language | TypeScript 5 (strict) |
 | Database | PostgreSQL 16 |
 
+### Frontend
+| Layer | Library |
+|---|---|
+| UI | [React 18](https://react.dev) |
+| Bundler | [esbuild](https://esbuild.github.io) |
+| Form engine | Custom TS (zero deps) |
+
 ---
 
 ## Architecture
 
 ```
-src/
-  core/
-    model/      ModelBase       — get / getByField / getAll / save / delete
-    form/       FormBuilder     — fluent Zod-backed form definition
-                handleForm      — validates payload, runs unique checks, saves, returns typed state
-    crud/       BaseCrud        — base resource class wiring model + form to HTTP handlers
-    routing/    ResourceRegistry — mounts CRUD routes onto Hono; response helpers ok() / fail()
-  resources/    your domain resources (one folder per resource)
-  middleware/   auth, errorHandler
-  db/           Drizzle schema + db instance
-  index.ts      app entry point
+server/                      BACKEND
+  src/
+    core/
+      model/      ModelBase       — get / getByField / getAll / save / delete
+      form/       FormBuilder     — fluent Zod-backed form definition
+                  handleForm      — validates payload, runs unique checks, saves, returns typed state
+      crud/       BaseCrud        — base resource class wiring model + form to HTTP handlers
+      routing/    ResourceRegistry — mounts CRUD routes onto Hono; response helpers ok() / fail()
+    resources/    your domain resources (one folder per resource)
+    middleware/   auth, errorHandler
+    db/           Drizzle schema + db instance
+    index.ts      app entry point
+
+client/                      FRONTEND
+  src/
+    core/
+      FormEngine.ts   — pure TS state machine (idle→submitting→created/updated/error)
+                        handles fetch, error mapping, edit mode — zero React dependency
+    react/
+      useFormEngine   — React 18 hook via useSyncExternalStore
+      FormController  — renders fields from config, disables submit while in-flight
+      fields/         — TextField, TextareaField, SelectField, CheckboxField
+    resources/        — per-resource field configs (mirrors backend form definitions)
+  dist/index.html     — served at /static/
 ```
 
 ### Request flow
@@ -91,11 +112,19 @@ curl http://localhost:3000/health
 # → { "ok": true }
 ```
 
+### 5. Open the demo UI
+
+```
+http://localhost:3000/static/index.html
+```
+
+Shows a companies form in edit mode (pre-populated). Comment out the `engine.load()` call in `client/src/index.tsx` to test create mode.
+
 ---
 
 ## Adding a New Resource
 
-### 1. Add a table to `src/db/schema.ts`
+### 1. Add a table to `server/src/db/schema.ts`
 
 ```ts
 export const users = pgTable('users', {
@@ -106,7 +135,7 @@ export const users = pgTable('users', {
 })
 ```
 
-### 2. Create `src/resources/users/model.ts`
+### 2. Create `server/src/resources/users/model.ts`
 
 ```ts
 import { users } from '../../db/schema.js'
@@ -121,7 +150,7 @@ export class UserModel extends ModelBase<typeof users, UserInsert, User> {
 }
 ```
 
-### 3. Create `src/resources/users/form.ts`
+### 3. Create `server/src/resources/users/form.ts`
 
 ```ts
 import { FormBuilder } from '../../core/form/index.js'
@@ -133,7 +162,7 @@ export const userForm = new FormBuilder<UserInsert>()
   .build()
 ```
 
-### 4. Create `src/resources/users/resource.ts`
+### 4. Create `server/src/resources/users/resource.ts`
 
 ```ts
 import { BaseCrud } from '../../core/crud/BaseCrud.js'
@@ -147,7 +176,7 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
 }
 ```
 
-### 5. Register in `src/index.ts`
+### 5. Register in `server/src/index.ts`
 
 ```ts
 import { UsersResource } from './resources/users/resource.js'
@@ -206,12 +235,81 @@ new FormBuilder<MyInput>()
 
 ---
 
-## Available Scripts
+## Frontend Form System
+
+### FormEngine (pure TypeScript)
+
+The engine owns all logic and has no React dependency — it can be used headlessly or wrapped by any other framework.
+
+```ts
+const engine = new FormEngine<CompanyInsert>({
+  endpoint: '/companies',
+  onSuccess: (data, mode) => console.log(mode, data), // mode: 'created' | 'updated'
+  onError: (errors) => console.error(errors),
+})
+
+engine.load(existingCompany)   // pre-populate for edit (auto-switches to PUT /:id)
+engine.submit(formValues)      // fetch → state machine → notify subscribers
+engine.reset()                 // back to idle
+```
+
+### useFormEngine hook
+
+```tsx
+function MyForm() {
+  const { engine, state, errors, isSubmitting } = useFormEngine<CompanyInsert>({
+    endpoint: '/companies',
+    onSuccess: () => navigate('/companies'),
+  })
+
+  // pre-populate for edit
+  useEffect(() => { engine.load(existingCompany) }, [engine])
+
+  return <FormController fields={companyFields} engine={engine} />
+}
+```
+
+### FieldConfig types
+
+```ts
+type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
+
+interface FieldConfig {
+  name: string
+  label: string
+  type: FieldType
+  placeholder?: string
+  required?: boolean
+  options?: { value: string; label: string }[]  // for select
+}
+```
+
+### Client scripts
 
 ```bash
-npm run dev          # tsx watch — hot reload (outside Docker)
-npm run build        # tsc compile to dist/
+npm run build -w client   # esbuild bundle → client/dist/app.js
+npm run dev -w client     # watch mode
+```
+
+---
+
+## Available Scripts
+
+Run from the **project root** (npm workspaces):
+
+```bash
+npm run dev          # hot reload for both server (tsx watch) and client (esbuild watch)
+npm run build        # compile server (tsc) + bundle client (esbuild)
 npm run db:generate  # generate Drizzle migrations from schema
 npm run db:migrate   # apply migrations
 npm run db:studio    # open Drizzle Studio (DB GUI)
+```
+
+Or target each package directly:
+
+```bash
+npm run dev -w server     # server only
+npm run dev -w client     # client only
+npm run build -w server
+npm run build -w client
 ```

@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { ResourceRegistry } from './core/routing/index.js'
@@ -10,6 +11,8 @@ const app = new Hono()
 
 app.use('*', logger())
 app.onError(errorHandler)
+
+app.use('/static/*', serveStatic({ root: '../client/dist', rewriteRequestPath: p => p.replace('/static', '') }))
 
 // Health check
 app.get('/health', ctx => ctx.json({ ok: true }))
