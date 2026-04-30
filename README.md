@@ -312,6 +312,63 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
 
 ---
 
+## Form Submissions (stateful lifecycle)
+
+`SubmissionResource` stores form data as JSONB in a `form_submissions` table, separate from your domain tables. Use it when you need draft saving, status tracking, or an approval workflow.
+
+### Status lifecycle
+
+```
+draft → submitted → locked → archived
+  ↑                              |
+  └──────────── restore ─────────┘
+```
+
+- **draft** — editable, validated with `'draft'` context (relaxed rules)
+- **submitted** — locked for editing; reached via `POST /:id/submit` which runs full `'submit'` validation
+- **locked** — fully read-only
+- **archived** — soft-removed; can be restored to `draft`
+
+### Adding a submission resource
+
+```ts
+// server/src/resources/leave-requests/resource.ts
+import { SubmissionResource } from '../../core/submission/index.js'
+import { leaveRequestForm } from './form.js'
+
+export class LeaveRequestsResource extends SubmissionResource {
+  readonly formName = 'leave_request'
+  readonly form     = leaveRequestForm
+
+  // Inject the authenticated user as creator
+  protected override getCreatedBy(ctx: Context) {
+    return (ctx.get('user') as { id: number } | undefined)?.id ?? null
+  }
+}
+
+// server/src/index.ts
+const leaveRequests = new LeaveRequestsResource()
+leaveRequests.mount(app, '/leave-requests')
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/leave-requests` | List (filterable, paginated, scoped to `form_name`) |
+| `GET` | `/leave-requests/:id` | Get single submission |
+| `POST` | `/leave-requests` | Create draft (draft validation) |
+| `PATCH` | `/leave-requests/:id` | Merge data into draft |
+| `DELETE` | `/leave-requests/:id` | Delete draft or archived |
+| `POST` | `/leave-requests/:id/submit` | draft → submitted (runs full validation) |
+| `POST` | `/leave-requests/:id/lock` | submitted → locked |
+| `POST` | `/leave-requests/:id/archive` | any → archived |
+| `POST` | `/leave-requests/:id/restore` | archived → draft |
+
+Request body for `POST` / `PATCH`: `{ "data": { ...formFields } }` or the fields directly at the root.
+
+---
+
 ## Form Definition API
 
 Forms are defined as a typed array of field objects using `defineForm` + per-type helpers. The definition is a plain inspectable object — Zod schema, unique checks, and field metadata are all derived from it.
