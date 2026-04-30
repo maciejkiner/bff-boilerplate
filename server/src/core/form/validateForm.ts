@@ -20,7 +20,13 @@ export async function validateForm<TInput extends Record<string, unknown>>(
   for (const field of form.fields) {
     if (!isVisible(field, ctx)) continue
     const key = field.name as string
-    if (key in rawValues) stripped[key] = rawValues[key as keyof typeof rawValues]
+    if (key in rawValues) {
+      stripped[key] = rawValues[key as keyof typeof rawValues]
+    } else if (field.defaultValue !== undefined) {
+      stripped[key] = typeof field.defaultValue === 'function'
+        ? (field.defaultValue as (c: typeof ctx) => unknown)(ctx)
+        : field.defaultValue
+    }
   }
 
   const parsed = form.toZodSchema(ctx).safeParse(stripped)

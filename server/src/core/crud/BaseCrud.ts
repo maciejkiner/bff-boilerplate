@@ -3,6 +3,8 @@ import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
 import type { ModelBase } from '../model/ModelBase.js'
 import type { FormDefinition, ValidationContext } from '../form/types.js'
 import { handleForm } from '../form/handleForm.js'
+import { defineForm } from '../form/FormDefinition.js'
+import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery, type ListQuery } from './listQuery.js'
 
@@ -49,6 +51,32 @@ export abstract class BaseCrud<
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     await this.afterUpdate(result.data, ctx)
     return ctx.json(ok(result.data))
+  }
+
+  async partialUpdate(ctx: Context): Promise<Response> {
+    const id       = Number(ctx.req.param('id'))
+    const existing = await this.model.get(id)
+    if (!existing) return ctx.json(fail({ _root: ['Not found'] }), 404)
+
+    const raw  = await ctx.req.json()
+    const body = await this.beforeUpdate(id, raw, ctx)
+    const sent = typeof body === 'object' && body !== null ? body : {}
+
+    // Scope validation to sent fields only; preserve cross-field rules whose
+    // fields are entirely present in the payload.
+    const sentKeys   = new Set(Object.keys(sent))
+    const sentFields = this.form.fields.filter(f => sentKeys.has(f.name))
+    const sentRules  = this.form.crossFieldRules.filter(r => r.fields.every(f => sentKeys.has(f)))
+    const scopedForm = defineForm(sentFields, { rules: sentRules })
+
+    const merged = { ...(existing as Record<string, unknown>), ...(sent as Record<string, unknown>) }
+    const result = await validateForm(scopedForm as any, merged, this.getValidationContext(ctx), id)
+    if (!result.ok) return ctx.json(fail(result.errors), 422)
+
+    const patch  = Object.fromEntries(sentFields.map(f => [f.name, (result.data as Record<string, unknown>)[f.name]]))
+    const saved  = await this.model.save(patch as TInput, id)
+    await this.afterUpdate(saved, ctx)
+    return ctx.json(ok(saved))
   }
 
   async delete(ctx: Context): Promise<Response> {

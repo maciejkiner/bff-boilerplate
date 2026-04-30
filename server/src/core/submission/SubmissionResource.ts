@@ -21,10 +21,12 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     app.patch(`${basePath}/:id`,               ctx => this.patch(ctx))
     app.patch(`${basePath}/:id/steps/:step`,   ctx => this.saveStep(ctx))
     app.delete(`${basePath}/:id`,              ctx => this.delete(ctx))
-    app.post(`${basePath}/:id/submit`,         ctx => this.submit(ctx))
-    app.post(`${basePath}/:id/lock`,           ctx => this.lock(ctx))
-    app.post(`${basePath}/:id/archive`,        ctx => this.archive(ctx))
-    app.post(`${basePath}/:id/restore`,        ctx => this.restore(ctx))
+    app.post(`${basePath}/:id/submit`,            ctx => this.submit(ctx))
+    app.post(`${basePath}/:id/lock`,              ctx => this.lock(ctx))
+    app.post(`${basePath}/:id/archive`,           ctx => this.archive(ctx))
+    app.post(`${basePath}/:id/restore`,           ctx => this.restore(ctx))
+    app.get(`${basePath}/:id/history`,            ctx => this.history(ctx))
+    app.get(`${basePath}/:id/history/:version`,   ctx => this.historyVersion(ctx))
   }
 
   // ── Schema ───────────────────────────────────────────────────────────────────
@@ -135,6 +137,26 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
 
   async restore(ctx: Context): Promise<Response> {
     return this.transition(ctx, 'archived', 'draft')
+  }
+
+  // ── Version history ───────────────────────────────────────────────────────────
+
+  async history(ctx: Context): Promise<Response> {
+    const id  = Number(ctx.req.param('id'))
+    const row = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const versions = await this.model.getHistory(id)
+    return ctx.json(ok(versions))
+  }
+
+  async historyVersion(ctx: Context): Promise<Response> {
+    const id      = Number(ctx.req.param('id'))
+    const version = Number(ctx.req.param('version'))
+    const row     = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const snap = await this.model.getVersion(id, version)
+    if (!snap) return ctx.json(fail({ _root: ['Version not found'] }), 404)
+    return ctx.json(ok(snap))
   }
 
   // ── Hooks ─────────────────────────────────────────────────────────────────────

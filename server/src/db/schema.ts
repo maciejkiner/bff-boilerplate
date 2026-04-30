@@ -11,6 +11,15 @@ export const companies = pgTable('companies', {
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
 
+export const form_submission_versions = pgTable('form_submission_versions', {
+  id:            serial('id').primaryKey(),
+  submission_id: integer('submission_id').notNull(),
+  version:       integer('version').notNull(),
+  data:          jsonb('data').notNull(),
+  changed_by:    integer('changed_by'),
+  changed_at:    timestamp('changed_at').defaultNow().notNull(),
+})
+
 export const form_submissions = pgTable('form_submissions', {
   id:         serial('id').primaryKey(),
   form_name:  varchar('form_name',  { length: 100 }).notNull(),

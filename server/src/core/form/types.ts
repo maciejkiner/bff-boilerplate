@@ -30,7 +30,7 @@ interface BaseFieldDef<TValues> {
   placeholder?:  string
   required?:     boolean | ((ctx: FormContext<TValues>) => boolean)
   visible?:      boolean | ((ctx: FormContext<TValues>) => boolean)
-  defaultValue?: unknown
+  defaultValue?: unknown | ((ctx: FormContext<TValues>) => unknown)
 }
 
 export interface TextFieldDef<T>     extends BaseFieldDef<T> { type: 'text';     minLength?: number; maxLength?: number; unique?: UniqueCheck }

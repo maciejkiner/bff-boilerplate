@@ -195,7 +195,20 @@ GET    /users
 GET    /users/:id
 POST   /users
 PUT    /users/:id
+PATCH  /users/:id
 DELETE /users/:id
+```
+
+---
+
+## Partial Update (PATCH)
+
+`PATCH /:resource/:id` validates and saves **only the fields present in the request body**, merging them with the existing record. Cross-field rules are applied only when all their referenced fields are included.
+
+```bash
+PATCH /companies/1
+{ "city": "Kraków" }
+# validates only the 'city' field, updates only that column
 ```
 
 ---
@@ -367,6 +380,74 @@ leaveRequests.mount(app, '/leave-requests')
 
 Request body for `POST` / `PATCH`: `{ "data": { ...formFields } }` or the fields directly at the root.
 
+### Version history
+
+Every data-changing operation (`PATCH`, step save) creates an immutable snapshot in `form_submission_versions`.
+
+```bash
+GET /leave-requests/42/history          # all versions in ascending order
+GET /leave-requests/42/history/3        # snapshot at version 3
+```
+
+Each response includes `{ version, data, changed_by, changed_at }`.
+
+---
+
+## Workflow Engine
+
+A standalone code-first state machine. Works independently — attach it to `SubmissionResource` or any other domain object.
+
+```ts
+import { defineWorkflow } from './core/workflow/index.js'
+
+export const leaveWorkflow = defineWorkflow({
+  name:    'leave_request',
+  initial: 'draft',
+  states: [
+    { name: 'draft',     type: 'initial' },
+    { name: 'submitted', type: 'intermediate' },
+    { name: 'approved',  type: 'final' },
+    { name: 'rejected',  type: 'final' },
+  ],
+  transitions: [
+    { name: 'submit', from: 'draft',      to: 'submitted' },
+    {
+      name: 'approve', from: 'submitted', to: 'approved',
+      guards: [
+        { check: (ctx) => ctx.user?.role === 'manager', message: 'Only managers can approve' },
+      ],
+    },
+    {
+      name: 'reject',  from: 'submitted', to: 'rejected',
+      guards: [
+        { check: (ctx) => ctx.user?.role === 'manager', message: 'Only managers can reject' },
+      ],
+    },
+    { name: 'recall', from: 'submitted',  to: 'draft' },
+  ],
+})
+```
+
+### Transition API
+
+```ts
+// Execute a transition
+const result = await leaveWorkflow.transition('approve', 'submitted', { user: currentUser })
+// { ok: true, newState: 'approved' }
+// { ok: false, reason: 'guard_failed', message: 'Only managers can approve' }
+// { ok: false, reason: 'invalid_transition', message: '...' }
+
+// Check what's available
+const available = await leaveWorkflow.availableTransitions('submitted', { user: currentUser })
+// returns TransitionDef[] the user can actually execute
+
+// Serialize for visualization
+const graph = leaveWorkflow.toGraph()
+// { states: [...], transitions: [...] }  — guards stripped from output
+```
+
+Guards are async-capable: `check: async (ctx) => await db.hasPermission(ctx.user.id, 'approve')`.
+
 ---
 
 ## Form Definition API
@@ -387,6 +468,15 @@ const userForm = defineForm<UserInsert>([
 ```
 
 Each field type only accepts options relevant to that type — TypeScript will catch `maxLength` on a `number` field at definition time.
+
+### Default values
+
+Every field accepts `defaultValue` — a static value or a `(ctx) => value` callback. It is injected before Zod validation when the field is absent from the payload.
+
+```ts
+text('status',      { label: 'Status',    defaultValue: 'active' }),
+text('assigned_to', { label: 'Assignee',  defaultValue: (ctx) => ctx.user?.id }),
+```
 
 ### Conditional fields
 
