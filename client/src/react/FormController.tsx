@@ -5,31 +5,37 @@ import { TextField } from './fields/TextField.js'
 import { TextareaField } from './fields/TextareaField.js'
 import { SelectField } from './fields/SelectField.js'
 import { CheckboxField } from './fields/CheckboxField.js'
+import type { FieldConfig } from '../core/types.js'
 
 interface Props<T extends { id?: number }> {
-  engine: FormEngine<T>
+  engine:       FormEngine<T>
   submitLabel?: string
+  fields?:      FieldConfig[]  // override which fields to render (used by WizardController)
 }
 
 export function FormController<T extends { id?: number }>({
   engine,
   submitLabel = 'Save',
+  fields: fieldOverride,
 }: Props<T>) {
-  const { fields, errors, isSubmitting, state } = useFormEngine<T>(engine)
+  const { fields: allFields, errors, isSubmitting, state, autosaving, lastSaved } = useFormEngine<T>(engine)
+  const fields = fieldOverride ?? allFields
 
   const [values, setValues] = useState<Record<string, unknown>>(
     () => ({ ...(engine.values as Record<string, unknown>) })
   )
 
-  const set = (name: string, value: unknown) =>
-    setValues(prev => ({ ...prev, [name]: value }))
+  const set = (name: string, value: unknown) => {
+    const next = { ...values, [name]: value }
+    setValues(next)
+    engine.setValues({ [name]: value } as Partial<T>)
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     engine.submit(values as T)
   }
 
-  // Schema not yet loaded
   if (fields.length === 0 && state !== 'error') {
     return <div className="form-loading">Loading form…</div>
   }
@@ -102,9 +108,17 @@ export function FormController<T extends { id?: number }>({
         )
       })}
 
-      <button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? 'Saving…' : submitLabel}
-      </button>
+      <div className="form-footer">
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Saving…' : submitLabel}
+        </button>
+        {autosaving && <span className="form-autosave">Saving…</span>}
+        {!autosaving && lastSaved && (
+          <span className="form-autosave">
+            Last saved {lastSaved.toLocaleTimeString()}
+          </span>
+        )}
+      </div>
     </form>
   )
 }

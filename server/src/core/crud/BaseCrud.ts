@@ -59,7 +59,7 @@ export abstract class BaseCrud<
   }
 
   async schema(ctx: Context): Promise<Response> {
-    return ctx.json(ok(this.form.toFieldMetas()))
+    return ctx.json(ok(this.form.toSchema()))
   }
 
   // ── Lifecycle hooks ────────────────────────────────────────────────────────

@@ -59,6 +59,14 @@ export interface CrossFieldRule<TInput> {
   errorField?: keyof TInput & string | '_root'
 }
 
+// ── Steps ──────────────────────────────────────────────────────────────────────
+
+export interface StepDef<TInput> {
+  name:   string
+  label:  string
+  fields: (keyof TInput & string)[]
+}
+
 // ── FormDefinition ─────────────────────────────────────────────────────────────
 
 export interface FieldMeta {
@@ -70,12 +78,25 @@ export interface FieldMeta {
   options?:     { value: string; label: string }[]
 }
 
+export interface StepMeta {
+  name:   string
+  label:  string
+  fields: string[]
+}
+
+export interface FormSchema {
+  fields: FieldMeta[]
+  steps?: StepMeta[]
+}
+
 export interface FormDefinition<TInput> {
   fields:           FieldDef<TInput>[]
+  steps:            StepDef<TInput>[]
   crossFieldRules:  CrossFieldRule<TInput>[]
   toZodSchema(ctx: FormContext<TInput>): z.ZodType<TInput>
   toUniqueChecks(ctx: FormContext<TInput>): UniqueCheck[]
   toFieldMetas(ctx?: Partial<FormContext<TInput>>): FieldMeta[]
+  toSchema(ctx?: Partial<FormContext<TInput>>): FormSchema
 }
 
 export interface UniqueCheck {

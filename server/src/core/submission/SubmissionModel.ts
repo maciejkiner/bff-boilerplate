@@ -33,6 +33,17 @@ export class SubmissionModel extends ModelBase<typeof form_submissions, FormSubm
     return row as unknown as FormSubmission
   }
 
+  async saveStepData(id: number, data: Record<string, unknown>, currentStep: string): Promise<FormSubmission> {
+    const rows = await db
+      .update(this.table)
+      .set({ data, current_step: currentStep, updated_at: new Date(), version: sql`${this.table.version} + 1` })
+      .where(eq(this.table.id, id))
+      .returning()
+    const row = rows[0]
+    if (!row) throw new Error(`Submission ${id} not found`)
+    return row as unknown as FormSubmission
+  }
+
   async patchData(id: number, partial: Record<string, unknown>): Promise<FormSubmission> {
     const existing = await this.get(id)
     if (!existing) throw new Error(`Submission ${id} not found`)

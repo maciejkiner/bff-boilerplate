@@ -428,39 +428,53 @@ export class LeaveRequestsResource extends BaseCrud<...> {
 
 ### Cross-field validation
 
-Rules that span multiple fields are passed as the second argument to `defineForm`. Each rule receives the validated values and `FormContext`, returns an error string or `null`:
+Rules are passed via the `rules` option. Each rule returns an error string or `null`:
 
 ```ts
-import { defineForm, text, number } from '../../core/form/index.js'
-
 export const eventForm = defineForm<EventInsert>(
   [
-    text('title',    { label: 'Title',      required: true }),
-    text('startDate',{ label: 'Start date', required: true }),
-    text('endDate',  { label: 'End date',   required: true }),
-    number('budget', { label: 'Budget' }),
-    number('spent',  { label: 'Spent' }),
+    text('startDate', { label: 'Start date', required: true }),
+    text('endDate',   { label: 'End date',   required: true }),
+    number('budget',  { label: 'Budget' }),
+    number('spent',   { label: 'Spent' }),
   ],
-  [
-    {
-      fields:     ['startDate', 'endDate'],
-      errorField: 'endDate',
-      validate:   (v) => v.endDate && v.startDate && v.endDate < v.startDate
-                    ? 'End date must be after start date'
-                    : null,
-    },
-    {
-      fields:     ['budget', 'spent'],
-      errorField: 'spent',
-      validate:   (v) => v.spent !== undefined && v.budget !== undefined && v.spent > v.budget
-                    ? 'Spent cannot exceed budget'
-                    : null,
-    },
-  ],
+  {
+    rules: [
+      {
+        fields:     ['startDate', 'endDate'],
+        errorField: 'endDate',
+        validate:   (v) => v.endDate && v.startDate && v.endDate < v.startDate
+                      ? 'End date must be after start date' : null,
+      },
+    ],
+  },
 )
 ```
 
-Errors are attached to `errorField` (defaults to `fields[0]`). Use `'_root'` for a form-level error not tied to any field. Cross-field rules run **after** Zod field validation and unique checks — they only execute when per-field validation already passes.
+Errors attach to `errorField` (defaults to `fields[0]`). Use `'_root'` for a form-level error. Cross-field rules run after Zod + unique checks.
+
+### Multi-step wizard (backend)
+
+Pass `steps` in the options to split a form into named steps:
+
+```ts
+export const onboardingForm = defineForm<OnboardingInsert>(
+  [
+    text('company_name', { label: 'Company name', required: true }),
+    text('nip',          { label: 'NIP' }),
+    text('contact_name', { label: 'Contact name', required: true }),
+    email('contact_email',{ label: 'Email',       required: true }),
+  ],
+  {
+    steps: [
+      { name: 'company',  label: 'Company details', fields: ['company_name', 'nip'] },
+      { name: 'contact',  label: 'Contact person',  fields: ['contact_name', 'contact_email'] },
+    ],
+  },
+)
+```
+
+Each step is validated individually via `PATCH /submissions/:id/steps/:stepName` — only that step's fields are validated with `'submit'` context. The full form is validated again on `POST /submissions/:id/submit`.
 
 Each form automatically exposes a `GET /:resource/schema` endpoint (see [Schema endpoint](#schema-endpoint) below).
 
@@ -498,27 +512,64 @@ const engine = new FormEngine<CompanyInsert>({
   // fields: [...] — optional static override, skips schema fetch
 })
 
-engine.load(existingCompany)   // pre-populate for edit (auto-switches to PUT /:id)
-engine.submit(formValues)      // fetch → state machine → notify subscribers
-engine.reset()                 // back to idle
+engine.load(existingCompany)         // pre-populate for edit (auto-switches to PUT /:id)
+engine.setValues({ name: 'Acme' })  // merge values + trigger autosave (if configured)
+engine.submit(formValues)            // fetch → state machine → notify subscribers
+engine.reset()                       // back to idle
 ```
+
+#### Autosave
+
+Pass `autosave` config to enable debounced PATCH on every `setValues()` call. Requires a loaded `id` (i.e. call `engine.load(existing)` first).
+
+```ts
+const engine = new FormEngine<CompanyInsert>({
+  endpoint:  '/companies',
+  autosave:  { delay: 1500 },   // ms, default 2000
+  onSuccess: (data) => console.log('saved', data),
+})
+engine.load(existingCompany)    // sets values.id → autosave will PATCH /:id
+```
+
+`FormController` automatically shows "Last saved HH:MM:SS" and a "Saving…" indicator when autosave is active.
 
 ### useFormEngine hook
 
 ```tsx
 function MyForm() {
-  const { engine, state } = useFormEngine<CompanyInsert>({
+  const { engine, state, autosaving, lastSaved } = useFormEngine<CompanyInsert>({
     endpoint: '/companies',
+    autosave: { delay: 2000 },
     onSuccess: () => navigate('/companies'),
   })
 
-  // pre-populate for edit
   useEffect(() => { engine.load(existingCompany) }, [engine])
 
-  // FormController fetches schema automatically — no fields prop needed
   return <FormController engine={engine} />
 }
 ```
+
+### WizardEngine (multi-step)
+
+`WizardEngine` manages a multi-step submission form. It fetches steps from the `SubmissionResource`'s `/schema` endpoint, saves each step individually, and submits the whole form at the end.
+
+```tsx
+function OnboardingWizard() {
+  const { engine, currentStep, steps, isLast } = useWizardEngine<OnboardingInsert>({
+    endpoint: '/onboarding',
+    onSubmit: (data) => navigate('/done'),
+  })
+
+  // Resume an in-progress submission
+  useEffect(() => {
+    if (existingSubmission) engine.load(existingSubmission)
+  }, [engine])
+
+  return <WizardController engine={engine} submitLabel="Submit application" />
+}
+```
+
+`WizardController` renders only the current step's fields, step indicators, and Prev/Next/Submit buttons. The `engine` is created by `useWizardEngine` — or instantiate `WizardEngine` directly for non-React use.
 
 ### Client scripts
 

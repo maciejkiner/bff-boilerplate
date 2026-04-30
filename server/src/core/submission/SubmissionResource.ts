@@ -1,5 +1,6 @@
 import type { Context, Hono } from 'hono'
 import type { FormDefinition } from '../form/types.js'
+import { defineForm } from '../form/FormDefinition.js'
 import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery } from '../crud/listQuery.js'
@@ -13,22 +14,29 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
   readonly model = new SubmissionModel()
 
   mount(app: Hono, basePath: string): void {
-    app.get(basePath,                      ctx => this.list(ctx))
-    app.get(`${basePath}/:id`,             ctx => this.get(ctx))
-    app.post(basePath,                     ctx => this.create(ctx))
-    app.patch(`${basePath}/:id`,           ctx => this.patch(ctx))
-    app.delete(`${basePath}/:id`,          ctx => this.delete(ctx))
-    app.post(`${basePath}/:id/submit`,     ctx => this.submit(ctx))
-    app.post(`${basePath}/:id/lock`,       ctx => this.lock(ctx))
-    app.post(`${basePath}/:id/archive`,    ctx => this.archive(ctx))
-    app.post(`${basePath}/:id/restore`,    ctx => this.restore(ctx))
+    app.get(`${basePath}/schema`,              ctx => this.schema(ctx))
+    app.get(basePath,                          ctx => this.list(ctx))
+    app.get(`${basePath}/:id`,                 ctx => this.get(ctx))
+    app.post(basePath,                         ctx => this.create(ctx))
+    app.patch(`${basePath}/:id`,               ctx => this.patch(ctx))
+    app.patch(`${basePath}/:id/steps/:step`,   ctx => this.saveStep(ctx))
+    app.delete(`${basePath}/:id`,              ctx => this.delete(ctx))
+    app.post(`${basePath}/:id/submit`,         ctx => this.submit(ctx))
+    app.post(`${basePath}/:id/lock`,           ctx => this.lock(ctx))
+    app.post(`${basePath}/:id/archive`,        ctx => this.archive(ctx))
+    app.post(`${basePath}/:id/restore`,        ctx => this.restore(ctx))
   }
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
+  // ── Schema ───────────────────────────────────────────────────────────────────
+
+  async schema(_ctx: Context): Promise<Response> {
+    return _ctx.json(ok(this.form.toSchema()))
+  }
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
 
   async list(ctx: Context): Promise<Response> {
     const query = parseListQuery(ctx.req.url)
-    // Scope to this form automatically
     query.filters.unshift({ field: 'form_name', op: 'eq', value: this.formName })
     const result = await this.model.list(query)
     return ctx.json(okPaged(result.rows, {
@@ -64,7 +72,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
     if (row.status !== 'draft') return ctx.json(fail({ _root: ['Only draft submissions can be edited'] }), 422)
 
-    const body   = await ctx.req.json()
+    const body    = await ctx.req.json()
     const partial = (body?.data ?? body) as Record<string, unknown>
     const merged  = { ...(row.data as object), ...partial }
     const result  = await validateForm(this.form, merged, 'draft')
@@ -74,22 +82,39 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     return ctx.json(ok(updated))
   }
 
-  async delete(ctx: Context): Promise<Response> {
-    const id  = Number(ctx.req.param('id'))
+  // ── Wizard step save ──────────────────────────────────────────────────────────
+
+  async saveStep(ctx: Context): Promise<Response> {
+    const id       = Number(ctx.req.param('id'))
+    const stepName = ctx.req.param('step')
+
     const row = await this.model.get(id)
     if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
-    if (row.status !== 'draft' && row.status !== 'archived') {
-      return ctx.json(fail({ _root: ['Only draft or archived submissions can be deleted'] }), 422)
-    }
-    await this.model.delete(id)
-    return ctx.json(ok(null))
+    if (row.status !== 'draft') return ctx.json(fail({ _root: ['Only draft submissions can be edited'] }), 422)
+
+    const stepDef = this.form.steps.find(s => s.name === stepName)
+    if (!stepDef) return ctx.json(fail({ _root: [`Unknown step: ${stepName}`] }), 404)
+
+    const body      = await ctx.req.json()
+    const stepInput = (body?.data ?? body) as Record<string, unknown>
+
+    // Validate only this step's fields using a scoped form definition
+    const stepFields = this.form.fields.filter(f => stepDef.fields.includes(f.name))
+    const stepForm   = defineForm(stepFields)
+    const merged     = { ...(row.data as object), ...stepInput }
+    const result     = await validateForm(stepForm as any, merged, 'submit')
+    if (!result.ok) return ctx.json(fail(result.errors), 422)
+
+    // Persist: merge all data (not just step fields) and update current_step
+    const fullData = { ...(row.data as object), ...(result.data as object) }
+    const updated  = await this.model.saveStepData(id, fullData, stepName)
+    return ctx.json(ok(updated))
   }
 
-  // ── Status transitions ───────────────────────────────────────────────────────
+  // ── Status transitions ────────────────────────────────────────────────────────
 
   async submit(ctx: Context): Promise<Response> {
     return this.transition(ctx, 'draft', 'submitted', async (row) => {
-      // Full validation before allowing submission
       const result = await validateForm(this.form, row.data, 'submit')
       if (!result.ok) return result.errors
       return null
@@ -112,11 +137,11 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     return this.transition(ctx, 'archived', 'draft')
   }
 
-  // ── Hooks ────────────────────────────────────────────────────────────────────
+  // ── Hooks ─────────────────────────────────────────────────────────────────────
 
   protected getCreatedBy(_ctx: Context): number | null { return null }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────────
 
   private async transition(
     ctx: Context,
@@ -128,7 +153,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     const row = await this.model.get(id)
     if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
     if (row.status !== from) {
-      return ctx.json(fail({ _root: [`Transition requires status '${from}', current status is '${row.status}'`] }), 422)
+      return ctx.json(fail({ _root: [`Transition requires status '${from}', current is '${row.status}'`] }), 422)
     }
     if (validate) {
       const errors = await validate(row)

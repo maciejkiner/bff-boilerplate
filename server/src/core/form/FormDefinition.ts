@@ -1,18 +1,31 @@
 import { z } from 'zod'
 import type {
-  CrossFieldRule, FieldDef, FieldMeta, FormContext, FormDefinition, UniqueCheck,
+  CrossFieldRule, FieldDef, FieldMeta, FormContext, FormDefinition, FormSchema,
+  StepDef, UniqueCheck,
 } from './types.js'
+
+export interface DefineFormOptions<TInput> {
+  rules?: CrossFieldRule<TInput>[]
+  steps?: StepDef<TInput>[]
+}
 
 export function defineForm<TInput>(
   fields: FieldDef<TInput>[],
-  crossFieldRules: CrossFieldRule<TInput>[] = [],
+  options: DefineFormOptions<TInput> = {},
 ): FormDefinition<TInput> {
+  const crossFieldRules = options.rules ?? []
+  const steps           = options.steps ?? []
   return {
     fields,
     crossFieldRules,
+    steps,
     toZodSchema:    (ctx) => buildZodSchema(fields, ctx),
     toUniqueChecks: (ctx) => collectUniqueChecks(fields, ctx),
     toFieldMetas:   (ctx) => buildFieldMetas(fields, ctx),
+    toSchema:       (ctx) => ({
+      fields: buildFieldMetas(fields, ctx),
+      steps:  steps.length ? steps.map(s => ({ name: s.name, label: s.label, fields: s.fields })) : undefined,
+    }),
   }
 }
 
@@ -41,7 +54,6 @@ function buildZodSchema<T>(fields: FieldDef<T>[], ctx: FormContext<T>): z.ZodTyp
 }
 
 function fieldToZod(field: FieldDef<unknown>, isRequired: boolean): z.ZodTypeAny {
-
   switch (field.type) {
     case 'text':
     case 'textarea': {
@@ -66,7 +78,6 @@ function fieldToZod(field: FieldDef<unknown>, isRequired: boolean): z.ZodTypeAny
     }
     case 'boolean':
       return z.coerce.boolean().optional()
-
     case 'select': {
       const values = field.options.map(o => o.value) as [string, ...string[]]
       const s = z.enum(values)
@@ -98,11 +109,10 @@ function buildFieldMetas<T>(
       const required = typeof field.required === 'function'
         ? (ctx ? field.required(ctx as FormContext<T>) : undefined)
         : field.required
-
       const meta: FieldMeta = { name: field.name, label: field.label, type: field.type }
-      if (field.placeholder)              meta.placeholder = field.placeholder
-      if (required !== undefined)         meta.required    = required
-      if ('options' in field && field.options) meta.options = field.options
+      if (field.placeholder)                   meta.placeholder = field.placeholder
+      if (required !== undefined)              meta.required    = required
+      if ('options' in field && field.options) meta.options     = field.options
       return meta
     })
 }
