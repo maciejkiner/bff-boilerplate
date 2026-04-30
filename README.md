@@ -74,8 +74,11 @@ Every endpoint returns the same shape:
 
 ```json
 { "ok": true,  "data": { ... } }
+{ "ok": true,  "data": [...], "meta": { "total": 100, "page": 1, "pageSize": 20, "hasNext": true } }
 { "ok": false, "errors": { "field": ["message"] } }
 ```
+
+List endpoints always include `meta` with pagination info.
 
 ---
 
@@ -197,6 +200,58 @@ DELETE /users/:id
 
 ---
 
+## Filtering, Sorting & Pagination
+
+All `GET /:resource` list endpoints support filtering, sorting, and offset-based pagination via query parameters — no extra code required.
+
+### Filtering
+
+```
+GET /companies?filter[name][like]=acme
+GET /companies?filter[city]=Warsaw&filter[name][like]=tech
+```
+
+Supported operators:
+
+| Operator | Meaning |
+|---|---|
+| *(none / default)* | `eq` — exact match |
+| `eq` | exact match |
+| `like` | `LIKE %value%` |
+| `gt` / `gte` | greater than / greater or equal |
+| `lt` / `lte` | less than / less or equal |
+| `isNull` | column IS NULL (value ignored) |
+
+Unknown fields and invalid operators are silently ignored.
+
+### Sorting
+
+```
+GET /companies?sort=name           # ascending
+GET /companies?sort=-createdAt     # descending
+GET /companies?sort=-createdAt,name  # multiple
+```
+
+### Pagination
+
+```
+GET /companies?page=2&pageSize=10
+```
+
+Defaults: `page=1`, `pageSize=20`. Maximum `pageSize` is 100.
+
+Response includes a `meta` object:
+
+```json
+{
+  "ok": true,
+  "data": [...],
+  "meta": { "total": 47, "page": 2, "pageSize": 10, "hasNext": true }
+}
+```
+
+---
+
 ## Overriding Default Handlers
 
 Override any method in your resource class:
@@ -206,12 +261,11 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
   readonly model = new UserModel()
   readonly form  = userForm
 
-  // Custom list with pagination
   override async list(ctx: Context): Promise<Response> {
-    const page  = Number(ctx.req.query('page') ?? 1)
-    const limit = 20
-    const rows  = await this.model.paginate(page, limit)
-    return ctx.json(ok(rows))
+    // parseListQuery is available for custom list logic
+    const query = parseListQuery(ctx.req.url)
+    const result = await this.model.list(query)
+    return ctx.json(okPaged(result.rows, { ...query, total: result.total, hasNext: query.page * query.pageSize < result.total }))
   }
 }
 ```

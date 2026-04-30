@@ -1,6 +1,7 @@
-import { eq, SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, isNull, like, lt, lte, sql, SQL } from 'drizzle-orm'
 import { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
 import { db } from '../../db/index.js'
+import type { FilterClause, ListQuery, SortClause } from '../crud/listQuery.js'
 
 export abstract class ModelBase<
   TTable extends PgTableWithColumns<TableConfig>,
@@ -29,6 +30,53 @@ export abstract class ModelBase<
     const q = db.select().from(this.table)
     const rows = where ? await q.where(where) : await q
     return rows as TSelect[]
+  }
+
+  async list(query: ListQuery): Promise<{ rows: TSelect[]; total: number }> {
+    const where  = this.buildWhere(query.filters)
+    const orders = this.buildOrderBy(query.sort)
+    const offset = (query.page - 1) * query.pageSize
+
+    const [countRow] = await db
+      .select({ total: sql<number>`cast(count(*) as int)` })
+      .from(this.table)
+      .where(where)
+
+    const rows = await db
+      .select()
+      .from(this.table)
+      .where(where)
+      .orderBy(...orders)
+      .limit(query.pageSize)
+      .offset(offset)
+
+    return { rows: rows as TSelect[], total: countRow?.total ?? 0 }
+  }
+
+  private buildWhere(filters: FilterClause[]): SQL | undefined {
+    const conditions: SQL[] = []
+    for (const f of filters) {
+      const col = (this.table as any)[f.field]
+      if (!col) continue
+      switch (f.op) {
+        case 'eq':     conditions.push(eq(col, f.value));              break
+        case 'like':   conditions.push(like(col, `%${f.value}%`));     break
+        case 'gt':     conditions.push(gt(col, f.value));              break
+        case 'gte':    conditions.push(gte(col, f.value));             break
+        case 'lt':     conditions.push(lt(col, f.value));              break
+        case 'lte':    conditions.push(lte(col, f.value));             break
+        case 'isNull': conditions.push(isNull(col));                   break
+      }
+    }
+    return conditions.length ? and(...conditions) : undefined
+  }
+
+  private buildOrderBy(sort: SortClause[]): SQL[] {
+    return sort.flatMap(s => {
+      const col = (this.table as any)[s.field]
+      if (!col) return []
+      return [s.dir === 'desc' ? desc(col) : asc(col)]
+    })
   }
 
   async save(data: TInsert, id?: number): Promise<TSelect> {

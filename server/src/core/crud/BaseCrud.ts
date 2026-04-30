@@ -3,7 +3,8 @@ import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
 import type { ModelBase } from '../model/ModelBase.js'
 import type { FormDefinition, ValidationContext } from '../form/types.js'
 import { handleForm } from '../form/handleForm.js'
-import { ok, fail } from '../routing/response.js'
+import { ok, okPaged, fail } from '../routing/response.js'
+import { parseListQuery } from './listQuery.js'
 
 export abstract class BaseCrud<
   TTable extends PgTableWithColumns<TableConfig>,
@@ -14,8 +15,14 @@ export abstract class BaseCrud<
   abstract readonly form:  FormDefinition<TInput>
 
   async list(ctx: Context): Promise<Response> {
-    const rows = await this.model.getAll()
-    return ctx.json(ok(rows))
+    const query  = parseListQuery(ctx.req.url)
+    const result = await this.model.list(query)
+    return ctx.json(okPaged(result.rows, {
+      total:    result.total,
+      page:     query.page,
+      pageSize: query.pageSize,
+      hasNext:  query.page * query.pageSize < result.total,
+    }))
   }
 
   async get(ctx: Context): Promise<Response> {
