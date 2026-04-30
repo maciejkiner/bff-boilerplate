@@ -1,7 +1,7 @@
 import type { Context } from 'hono'
 import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
 import type { ModelBase } from '../model/ModelBase.js'
-import type { FormDefinition } from '../form/types.js'
+import type { FormDefinition, ValidationContext } from '../form/types.js'
 import { handleForm } from '../form/handleForm.js'
 import { ok, fail } from '../routing/response.js'
 
@@ -27,7 +27,7 @@ export abstract class BaseCrud<
 
   async create(ctx: Context): Promise<Response> {
     const body   = await ctx.req.json()
-    const result = await handleForm(this.form, this.model, body)
+    const result = await handleForm(this.form, this.model, body, undefined, this.getValidationContext(ctx))
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     return ctx.json(ok(result.data), 201)
   }
@@ -35,10 +35,12 @@ export abstract class BaseCrud<
   async update(ctx: Context): Promise<Response> {
     const id     = Number(ctx.req.param('id'))
     const body   = await ctx.req.json()
-    const result = await handleForm(this.form, this.model, body, id)
+    const result = await handleForm(this.form, this.model, body, id, this.getValidationContext(ctx))
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     return ctx.json(ok(result.data))
   }
+
+  protected getValidationContext(_ctx: Context): ValidationContext { return 'submit' }
 
   async delete(ctx: Context): Promise<Response> {
     const id = Number(ctx.req.param('id'))

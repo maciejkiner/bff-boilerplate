@@ -1,8 +1,9 @@
 import { sql } from 'drizzle-orm'
 import { db } from '../../db/index.js'
 import { ModelBase } from '../model/ModelBase.js'
-import type { FormDefinition, FormResult } from './types.js'
+import type { FormDefinition, FormResult, ValidationContext } from './types.js'
 import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
+import { isVisible } from './FormDefinition.js'
 
 export async function handleForm<
   TInput extends Record<string, unknown>,
@@ -13,8 +14,20 @@ export async function handleForm<
   model: ModelBase<TTable, TInput, TSelect>,
   payload: unknown,
   id?: number,
+  validationContext: ValidationContext = 'submit',
 ): Promise<FormResult<TSelect>> {
-  const parsed = form.toZodSchema().safeParse(payload)
+  const rawValues = (typeof payload === 'object' && payload !== null ? payload : {}) as Partial<TInput>
+  const ctx = { values: rawValues, validationContext }
+
+  // Strip invisible fields from payload before validation
+  const stripped: Record<string, unknown> = {}
+  for (const field of form.fields) {
+    if (!isVisible(field, ctx)) continue
+    const key = field.name as string
+    if (key in rawValues) stripped[key] = rawValues[key as keyof typeof rawValues]
+  }
+
+  const parsed = form.toZodSchema(ctx).safeParse(stripped)
 
   if (!parsed.success) {
     return { state: 'error', errors: flattenZodErrors(parsed.error.issues) }
@@ -23,12 +36,12 @@ export async function handleForm<
   const data = parsed.data
 
   const uniqueErrors: Record<string, string[]> = {}
-  for (const check of form.toUniqueChecks()) {
+  for (const check of form.toUniqueChecks(ctx)) {
     const value = (data as Record<string, unknown>)[check.field]
     const rows = await db.execute(
-      sql.raw(`SELECT id FROM ${check.table} WHERE ${check.column} = '${value}' ${id ? `AND id != ${id}` : ''} LIMIT 1`)
+      sql`SELECT id FROM ${sql.identifier(check.table)} WHERE ${sql.identifier(check.column)} = ${value} ${id ? sql`AND id != ${id}` : sql``} LIMIT 1`
     )
-    if (rows.length > 0) uniqueErrors[check.field] = [`${check.field} already exists`]
+    if (rows.rowCount && rows.rowCount > 0) uniqueErrors[check.field] = [`${check.field} already exists`]
   }
 
   if (Object.keys(uniqueErrors).length > 0) {

@@ -6,22 +6,37 @@ import type {
 export function defineForm<TInput>(fields: FieldDef<TInput>[]): FormDefinition<TInput> {
   return {
     fields,
-    toZodSchema:    () => buildZodSchema(fields),
-    toUniqueChecks: () => collectUniqueChecks(fields),
+    toZodSchema:    (ctx) => buildZodSchema(fields, ctx),
+    toUniqueChecks: (ctx) => collectUniqueChecks(fields, ctx),
     toFieldMetas:   (ctx) => buildFieldMetas(fields, ctx),
   }
 }
 
+// ── Visibility / required helpers ──────────────────────────────────────────────
+
+export function isVisible<T>(field: FieldDef<T>, ctx: Partial<FormContext<T>>): boolean {
+  if (field.visible === undefined || field.visible === true) return true
+  if (field.visible === false) return false
+  return field.visible(ctx as FormContext<T>)
+}
+
+function resolveRequired<T>(field: FieldDef<T>, ctx: FormContext<T>): boolean {
+  if (typeof field.required === 'function') return field.required(ctx)
+  return field.required === true
+}
+
 // ── Zod derivation ─────────────────────────────────────────────────────────────
 
-function buildZodSchema<T>(fields: FieldDef<T>[]): z.ZodType<T> {
+function buildZodSchema<T>(fields: FieldDef<T>[], ctx: FormContext<T>): z.ZodType<T> {
   const shape: Record<string, z.ZodTypeAny> = {}
-  for (const field of fields) shape[field.name] = fieldToZod(field)
+  for (const field of fields) {
+    if (!isVisible(field, ctx)) continue
+    shape[field.name] = fieldToZod(field, resolveRequired(field, ctx))
+  }
   return z.object(shape) as unknown as z.ZodType<T>
 }
 
-function fieldToZod(field: FieldDef<unknown>): z.ZodTypeAny {
-  const isRequired = field.required === true
+function fieldToZod(field: FieldDef<unknown>, isRequired: boolean): z.ZodTypeAny {
 
   switch (field.type) {
     case 'text':
@@ -58,9 +73,10 @@ function fieldToZod(field: FieldDef<unknown>): z.ZodTypeAny {
 
 // ── Unique checks ──────────────────────────────────────────────────────────────
 
-function collectUniqueChecks<T>(fields: FieldDef<T>[]): UniqueCheck[] {
+function collectUniqueChecks<T>(fields: FieldDef<T>[], ctx: FormContext<T>): UniqueCheck[] {
   const checks: UniqueCheck[] = []
   for (const field of fields) {
+    if (!isVisible(field, ctx)) continue
     if ('unique' in field && field.unique) checks.push(field.unique)
   }
   return checks
@@ -73,11 +89,7 @@ function buildFieldMetas<T>(
   ctx?: Partial<FormContext<T>>,
 ): FieldMeta[] {
   return fields
-    .filter(field => {
-      if (field.visible === undefined || field.visible === true) return true
-      if (field.visible === false) return false
-      return ctx ? field.visible(ctx as FormContext<T>) : true
-    })
+    .filter(field => isVisible(field, ctx ?? {}))
     .map(field => {
       const required = typeof field.required === 'function'
         ? (ctx ? field.required(ctx as FormContext<T>) : undefined)

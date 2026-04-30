@@ -237,7 +237,9 @@ const userForm = defineForm<UserInsert>([
 
 Each field type only accepts options relevant to that type — TypeScript will catch `maxLength` on a `number` field at definition time.
 
-Fields support conditional `required` and `visible` callbacks (ready for per-user form shapes):
+### Conditional fields
+
+`visible` and `required` accept a static boolean **or** a callback that receives `FormContext`:
 
 ```ts
 text('tax_id', {
@@ -245,6 +247,32 @@ text('tax_id', {
   visible:  (ctx) => ctx.user?.role === 'admin',
   required: (ctx) => ctx.values.type === 'company',
 })
+```
+
+Invisible fields are **stripped from the payload before validation** — they never appear in the Zod schema and are never saved.
+
+### Validation context
+
+`ValidationContext` (`'draft' | 'submit' | 'approve' | 'custom'`) travels through `FormContext` so the same form can enforce different strictness per operation:
+
+```ts
+text('justification', {
+  label:    'Justification',
+  required: (ctx) => ctx.validationContext === 'submit',
+})
+```
+
+`handleForm` defaults to `'submit'`. Override per resource to support draft saves:
+
+```ts
+export class LeaveRequestsResource extends BaseCrud<...> {
+  readonly model = new LeaveRequestModel()
+  readonly form  = leaveRequestForm
+
+  protected override getValidationContext(ctx: Context): ValidationContext {
+    return ctx.req.query('draft') === 'true' ? 'draft' : 'submit'
+  }
+}
 ```
 
 Each form automatically exposes a `GET /:resource/schema` endpoint (see [Schema endpoint](#schema-endpoint) below).

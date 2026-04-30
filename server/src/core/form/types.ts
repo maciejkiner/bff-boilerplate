@@ -8,21 +8,28 @@ export type FormResult<T> =
   | { state: 'updated'; data: T }
   | { state: 'error';   errors: Record<string, string[]> }
 
+// ── Validation context ─────────────────────────────────────────────────────────
+
+export type ValidationContext = 'draft' | 'submit' | 'approve' | 'custom'
+
+// ── Form context ───────────────────────────────────────────────────────────────
+
+export interface FormContext<TValues = Record<string, unknown>> {
+  values:            Partial<TValues>
+  user?:             { id: number; role: string; [key: string]: unknown }
+  validationContext: ValidationContext
+}
+
 // ── Field types ────────────────────────────────────────────────────────────────
 
 export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
 
-export interface FormContext<TValues = Record<string, unknown>> {
-  values: Partial<TValues>
-  user?:  { id: number; role: string; [key: string]: unknown }
-}
-
 interface BaseFieldDef<TValues> {
-  name:         keyof TValues & string
-  label:        string
-  placeholder?: string
-  required?:    boolean | ((ctx: FormContext<TValues>) => boolean)
-  visible?:     boolean | ((ctx: FormContext<TValues>) => boolean)
+  name:          keyof TValues & string
+  label:         string
+  placeholder?:  string
+  required?:     boolean | ((ctx: FormContext<TValues>) => boolean)
+  visible?:      boolean | ((ctx: FormContext<TValues>) => boolean)
   defaultValue?: unknown
 }
 
@@ -55,9 +62,9 @@ export interface FieldMeta {
 }
 
 export interface FormDefinition<TInput> {
-  fields:        FieldDef<TInput>[]
-  toZodSchema(): z.ZodType<TInput>
-  toUniqueChecks(): UniqueCheck[]
+  fields:         FieldDef<TInput>[]
+  toZodSchema(ctx: FormContext<TInput>): z.ZodType<TInput>
+  toUniqueChecks(ctx: FormContext<TInput>): UniqueCheck[]
   toFieldMetas(ctx?: Partial<FormContext<TInput>>): FieldMeta[]
 }
 
