@@ -252,9 +252,47 @@ Response includes a `meta` object:
 
 ---
 
+## Lifecycle Hooks
+
+Override any hook in your resource subclass to inject behaviour at each stage. `before*` hooks receive and return data — return a modified copy to transform the payload, or throw to abort. `after*` hooks are fire-and-forget.
+
+```ts
+export class CompaniesResource extends BaseCrud<typeof companies, CompanyInsert, Company> {
+  readonly model = new CompanyModel()
+  readonly form  = companyForm
+
+  // Scope list to current user's tenant
+  protected override async beforeList(query: ListQuery, ctx: Context) {
+    const tenantId = ctx.get('tenantId') as string
+    return { ...query, filters: [...query.filters, { field: 'tenant_id', op: 'eq' as const, value: tenantId }] }
+  }
+
+  // Inject createdBy before validation
+  protected override async beforeCreate(body: unknown, ctx: Context) {
+    const user = ctx.get('user') as { id: number }
+    return { ...(body as object), created_by: user.id }
+  }
+
+  // Send notification after a record is created
+  protected override async afterCreate(record: Company, _ctx: Context) {
+    await notify(`New company created: ${record.name}`)
+  }
+
+  // Prevent deletion of locked records
+  protected override async beforeDelete(id: number, _ctx: Context) {
+    const row = await this.model.get(id)
+    if (row?.locked) throw new Error('Cannot delete a locked company')
+  }
+}
+```
+
+Available hooks: `beforeList`, `beforeCreate`, `afterCreate`, `beforeUpdate`, `afterUpdate`, `beforeDelete`.
+
+---
+
 ## Overriding Default Handlers
 
-Override any method in your resource class:
+Override any handler method directly when you need full control:
 
 ```ts
 export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
@@ -262,10 +300,12 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
   readonly form  = userForm
 
   override async list(ctx: Context): Promise<Response> {
-    // parseListQuery is available for custom list logic
-    const query = parseListQuery(ctx.req.url)
+    const query  = parseListQuery(ctx.req.url)
     const result = await this.model.list(query)
-    return ctx.json(okPaged(result.rows, { ...query, total: result.total, hasNext: query.page * query.pageSize < result.total }))
+    return ctx.json(okPaged(result.rows, {
+      total: result.total, page: query.page, pageSize: query.pageSize,
+      hasNext: query.page * query.pageSize < result.total,
+    }))
   }
 }
 ```
