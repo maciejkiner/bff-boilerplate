@@ -50,6 +50,15 @@ export type FieldDef<T> =
   | BooleanFieldDef<T>
   | SelectFieldDef<T>
 
+// ── Cross-field validation ─────────────────────────────────────────────────────
+
+export interface CrossFieldRule<TInput> {
+  fields:   (keyof TInput & string)[]
+  validate: (values: Partial<TInput>, ctx: FormContext<TInput>) => string | null
+  /** Field to attach the error to. Defaults to fields[0]. '_root' for form-level. */
+  errorField?: keyof TInput & string | '_root'
+}
+
 // ── FormDefinition ─────────────────────────────────────────────────────────────
 
 export interface FieldMeta {
@@ -62,7 +71,8 @@ export interface FieldMeta {
 }
 
 export interface FormDefinition<TInput> {
-  fields:         FieldDef<TInput>[]
+  fields:           FieldDef<TInput>[]
+  crossFieldRules:  CrossFieldRule<TInput>[]
   toZodSchema(ctx: FormContext<TInput>): z.ZodType<TInput>
   toUniqueChecks(ctx: FormContext<TInput>): UniqueCheck[]
   toFieldMetas(ctx?: Partial<FormContext<TInput>>): FieldMeta[]

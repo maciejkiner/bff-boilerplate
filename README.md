@@ -275,6 +275,42 @@ export class LeaveRequestsResource extends BaseCrud<...> {
 }
 ```
 
+### Cross-field validation
+
+Rules that span multiple fields are passed as the second argument to `defineForm`. Each rule receives the validated values and `FormContext`, returns an error string or `null`:
+
+```ts
+import { defineForm, text, number } from '../../core/form/index.js'
+
+export const eventForm = defineForm<EventInsert>(
+  [
+    text('title',    { label: 'Title',      required: true }),
+    text('startDate',{ label: 'Start date', required: true }),
+    text('endDate',  { label: 'End date',   required: true }),
+    number('budget', { label: 'Budget' }),
+    number('spent',  { label: 'Spent' }),
+  ],
+  [
+    {
+      fields:     ['startDate', 'endDate'],
+      errorField: 'endDate',
+      validate:   (v) => v.endDate && v.startDate && v.endDate < v.startDate
+                    ? 'End date must be after start date'
+                    : null,
+    },
+    {
+      fields:     ['budget', 'spent'],
+      errorField: 'spent',
+      validate:   (v) => v.spent !== undefined && v.budget !== undefined && v.spent > v.budget
+                    ? 'Spent cannot exceed budget'
+                    : null,
+    },
+  ],
+)
+```
+
+Errors are attached to `errorField` (defaults to `fields[0]`). Use `'_root'` for a form-level error not tied to any field. Cross-field rules run **after** Zod field validation and unique checks — they only execute when per-field validation already passes.
+
 Each form automatically exposes a `GET /:resource/schema` endpoint (see [Schema endpoint](#schema-endpoint) below).
 
 ---

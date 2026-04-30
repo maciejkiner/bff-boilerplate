@@ -1,11 +1,15 @@
 import { z } from 'zod'
 import type {
-  FieldDef, FieldMeta, FormContext, FormDefinition, UniqueCheck,
+  CrossFieldRule, FieldDef, FieldMeta, FormContext, FormDefinition, UniqueCheck,
 } from './types.js'
 
-export function defineForm<TInput>(fields: FieldDef<TInput>[]): FormDefinition<TInput> {
+export function defineForm<TInput>(
+  fields: FieldDef<TInput>[],
+  crossFieldRules: CrossFieldRule<TInput>[] = [],
+): FormDefinition<TInput> {
   return {
     fields,
+    crossFieldRules,
     toZodSchema:    (ctx) => buildZodSchema(fields, ctx),
     toUniqueChecks: (ctx) => collectUniqueChecks(fields, ctx),
     toFieldMetas:   (ctx) => buildFieldMetas(fields, ctx),

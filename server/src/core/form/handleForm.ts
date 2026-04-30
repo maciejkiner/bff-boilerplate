@@ -48,6 +48,19 @@ export async function handleForm<
     return { state: 'error', errors: uniqueErrors }
   }
 
+  const crossErrors: Record<string, string[]> = {}
+  for (const rule of form.crossFieldRules) {
+    const msg = rule.validate(data as Partial<TInput>, ctx)
+    if (msg !== null) {
+      const key = rule.errorField ?? rule.fields[0] ?? '_root'
+      if (!crossErrors[key]) crossErrors[key] = []
+      crossErrors[key]!.push(msg)
+    }
+  }
+  if (Object.keys(crossErrors).length > 0) {
+    return { state: 'error', errors: crossErrors }
+  }
+
   const saved = await model.save(data, id)
   return { state: id !== undefined ? 'updated' : 'created', data: saved }
 }
