@@ -1,3 +1,4 @@
-export { FormBuilder } from './FormBuilder.js'
+export { defineForm } from './FormDefinition.js'
+export * from './fields.js'
 export { handleForm } from './handleForm.js'
-export type { BuiltForm, FormResult, FormState } from './types.js'
+export type { FormDefinition, FormResult, FormState, FormContext, FieldDef, FieldMeta, FieldType, UniqueCheck } from './types.js'

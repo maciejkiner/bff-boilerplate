@@ -151,13 +151,13 @@ export class UserModel extends ModelBase<typeof users, UserInsert, User> {
 ### 3. Create `server/src/resources/users/form.ts`
 
 ```ts
-import { FormBuilder } from '../../core/form/index.js'
+import { defineForm, text, email } from '../../core/form/index.js'
 import type { UserInsert } from './model.js'
 
-export const userForm = new FormBuilder<UserInsert>()
-  .field('name').required().maxLength(100)
-  .field('email').required().isEmail().isUnique('users', 'email')
-  .build()
+export const userForm = defineForm<UserInsert>([
+  text('name',   { label: 'Name',  required: true, maxLength: 100 }),
+  email('email', { label: 'Email', required: true, unique: { field: 'email', table: 'users', column: 'email' } }),
+])
 ```
 
 ### 4. Create `server/src/resources/users/resource.ts`
@@ -218,26 +218,42 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
 
 ---
 
-## FormBuilder API
+## Form Definition API
+
+Forms are defined as a typed array of field objects using `defineForm` + per-type helpers. The definition is a plain inspectable object — Zod schema, unique checks, and field metadata are all derived from it.
 
 ```ts
-new FormBuilder<MyInput>()
-  .field('name').label('Full name').required().maxLength(100)
-  .field('email').label('Email').required().isEmail().isUnique('users', 'email')
-  .field('age').label('Age').isNumber().min(0).max(120)
-  .field('role').label('Role').isEnum(['admin', 'user'])
-  .field('website').label('Website').optional().isUrl()
-  .field('bio').label('Bio').optional().asTextarea().maxLength(500)
-  .build()
+import { defineForm, text, email, number, select, boolean, textarea, url } from './core/form/index.js'
+
+const userForm = defineForm<UserInsert>([
+  text('name',     { label: 'Full name',  required: true, maxLength: 100 }),
+  email('email',   { label: 'Email',      required: true, unique: { field: 'email', table: 'users', column: 'email' } }),
+  number('age',    { label: 'Age',        min: 0, max: 120 }),
+  select('role',   { label: 'Role',       required: true, options: [{ value: 'admin', label: 'Admin' }, { value: 'user', label: 'User' }] }),
+  url('website',   { label: 'Website' }),
+  textarea('bio',  { label: 'Bio',        maxLength: 500 }),
+])
 ```
 
-Each field automatically exposes a `GET /:resource/schema` endpoint that returns the field metadata — labels, placeholders, types — so the frontend can render the form without any hardcoded config (see [Schema endpoint](#schema-endpoint) below).
+Each field type only accepts options relevant to that type — TypeScript will catch `maxLength` on a `number` field at definition time.
+
+Fields support conditional `required` and `visible` callbacks (ready for per-user form shapes):
+
+```ts
+text('tax_id', {
+  label:    'Tax ID',
+  visible:  (ctx) => ctx.user?.role === 'admin',
+  required: (ctx) => ctx.values.type === 'company',
+})
+```
+
+Each form automatically exposes a `GET /:resource/schema` endpoint (see [Schema endpoint](#schema-endpoint) below).
 
 ---
 
 ## Schema Endpoint
 
-Every registered resource automatically gets a `GET /:resource/schema` endpoint that returns the form field definitions — labels, placeholders, types, required flags — derived directly from the backend `FormBuilder`.
+Every registered resource automatically gets a `GET /:resource/schema` endpoint that returns the form field definitions — labels, placeholders, types, required flags — derived directly from the `FormDefinition`.
 
 ```bash
 GET /companies/schema
