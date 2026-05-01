@@ -6,10 +6,14 @@ import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery } from '../crud/listQuery.js'
 import { SubmissionModel } from './SubmissionModel.js'
 import { TRANSITIONS, type FormSubmission, type SubmissionStatus } from './types.js'
+import type { WorkflowInstance } from '../workflow/types.js'
+import type { AuditLogger } from '../audit/AuditLogger.js'
 
 export abstract class SubmissionResource<TValues extends Record<string, unknown> = Record<string, unknown>> {
   abstract readonly formName: string
   abstract readonly form:     FormDefinition<TValues>
+  readonly workflow?:    WorkflowInstance
+  protected readonly auditLogger?: AuditLogger
 
   readonly model = new SubmissionModel()
 
@@ -27,6 +31,8 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     app.post(`${basePath}/:id/restore`,           ctx => this.restore(ctx))
     app.get(`${basePath}/:id/history`,            ctx => this.history(ctx))
     app.get(`${basePath}/:id/history/:version`,   ctx => this.historyVersion(ctx))
+    app.get(`${basePath}/:id/transitions`,         ctx => this.listTransitions(ctx))
+    app.post(`${basePath}/:id/transitions/:action`, ctx => this.executeTransition(ctx))
   }
 
   // ── Schema ───────────────────────────────────────────────────────────────────
@@ -66,6 +72,14 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
       created_by: this.getCreatedBy(ctx),
     })
     return ctx.json(ok(submission), 201)
+  }
+
+  async delete(ctx: Context): Promise<Response> {
+    const id  = Number(ctx.req.param('id'))
+    const row = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    await this.model.delete(id)
+    return ctx.json(ok(null))
   }
 
   async patch(ctx: Context): Promise<Response> {
@@ -109,7 +123,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
 
     // Persist: merge all data (not just step fields) and update current_step
     const fullData = { ...(row.data as object), ...(result.data as object) }
-    const updated  = await this.model.saveStepData(id, fullData, stepName)
+    const updated  = await this.model.saveStepData(id, fullData, stepName!)
     return ctx.json(ok(updated))
   }
 
@@ -159,9 +173,46 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     return ctx.json(ok(snap))
   }
 
+  // ── Workflow transitions ──────────────────────────────────────────────────────
+
+  async listTransitions(ctx: Context): Promise<Response> {
+    if (!this.workflow) return ctx.json(fail({ _root: ['No workflow defined for this resource'] }), 400)
+    const row = await this.model.get(Number(ctx.req.param('id')))
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const current   = row.workflow_state ?? this.workflow.initial
+    const wfCtx     = this.buildWorkflowContext(ctx, row)
+    const available = await this.workflow.availableTransitions(current, wfCtx)
+    return ctx.json(ok(available.map(t => ({ name: t.name, label: t.label ?? t.name, to: t.to }))))
+  }
+
+  async executeTransition(ctx: Context): Promise<Response> {
+    if (!this.workflow) return ctx.json(fail({ _root: ['No workflow defined for this resource'] }), 400)
+    const id     = Number(ctx.req.param('id'))
+    const action = ctx.req.param('action')!
+    const row    = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const current = row.workflow_state ?? this.workflow.initial
+    const wfCtx   = this.buildWorkflowContext(ctx, row)
+    const result  = await this.workflow.transition(action, current, wfCtx)
+    if (!result.ok) return ctx.json(fail({ _root: [result.message] }), 422)
+    const updated = await this.model.setWorkflowState(id, result.newState)
+    await this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState } })
+    return ctx.json(ok(updated))
+  }
+
   // ── Hooks ─────────────────────────────────────────────────────────────────────
 
   protected getCreatedBy(_ctx: Context): number | null { return null }
+  protected getUserId(_ctx: Context):    number | null { return null }
+
+  protected buildWorkflowContext(ctx: Context, row: FormSubmission): import('../workflow/types.js').WorkflowContext {
+    const user = ctx.get('user') as { id: number; role: string } | undefined
+    return {
+      ...(user !== undefined ? { user } : {}),
+      submission: row as unknown as Record<string, unknown>,
+      data:       row.data,
+    }
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 

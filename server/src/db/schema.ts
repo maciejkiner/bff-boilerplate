@@ -11,6 +11,16 @@ export const companies = pgTable('companies', {
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
 
+export const audit_events = pgTable('audit_events', {
+  id:          serial('id').primaryKey(),
+  entity_type: varchar('entity_type', { length: 100 }).notNull(),
+  entity_id:   integer('entity_id').notNull(),
+  action:      varchar('action',      { length: 50  }).notNull(),
+  user_id:     integer('user_id'),
+  payload:     jsonb('payload'),
+  timestamp:   timestamp('timestamp').defaultNow().notNull(),
+})
+
 export const form_submission_versions = pgTable('form_submission_versions', {
   id:            serial('id').primaryKey(),
   submission_id: integer('submission_id').notNull(),
@@ -25,8 +35,9 @@ export const form_submissions = pgTable('form_submissions', {
   form_name:  varchar('form_name',  { length: 100 }).notNull(),
   status:     varchar('status',     { length: 20  }).notNull().default('draft'),
   data:       jsonb('data').notNull().default({}),
-  created_by:   integer('created_by'),
-  current_step: varchar('current_step', { length: 100 }),
+  created_by:     integer('created_by'),
+  current_step:   varchar('current_step',   { length: 100 }),
+  workflow_state: varchar('workflow_state', { length: 100 }),
   created_at:   timestamp('created_at').defaultNow().notNull(),
   updated_at:   timestamp('updated_at').defaultNow().notNull(),
   version:      integer('version').notNull().default(1),

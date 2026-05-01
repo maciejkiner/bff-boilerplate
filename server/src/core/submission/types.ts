@@ -5,8 +5,9 @@ export interface FormSubmission {
   form_name:    string
   status:       SubmissionStatus
   data:         Record<string, unknown>
-  created_by:   number | null
-  current_step: string | null
+  created_by:     number | null
+  current_step:   string | null
+  workflow_state: string | null
   created_at:   Date
   updated_at:   Date
   version:      number

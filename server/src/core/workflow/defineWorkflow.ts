@@ -1,10 +1,9 @@
 import type {
-  Guard, StateDef, TransitionDef, TransitionResult,
+  Guard, SideEffectContext, StateDef, TransitionDef, TransitionResult,
   WorkflowContext, WorkflowDef, WorkflowInstance,
 } from './types.js'
 
 export function defineWorkflow(def: WorkflowDef): WorkflowInstance {
-  // Validate at definition time
   const stateNames = new Set(def.states.map(s => s.name))
   if (!stateNames.has(def.initial)) {
     throw new Error(`Workflow '${def.name}': initial state '${def.initial}' is not defined`)
@@ -12,9 +11,11 @@ export function defineWorkflow(def: WorkflowDef): WorkflowInstance {
   for (const t of def.transitions) {
     const froms = Array.isArray(t.from) ? t.from : [t.from]
     for (const f of froms) {
-      if (!stateNames.has(f)) throw new Error(`Workflow '${def.name}': transition '${t.name}' references unknown state '${f}'`)
+      if (!stateNames.has(f))
+        throw new Error(`Workflow '${def.name}': transition '${t.name}' references unknown state '${f}'`)
     }
-    if (!stateNames.has(t.to)) throw new Error(`Workflow '${def.name}': transition '${t.name}' references unknown state '${t.to}'`)
+    if (!stateNames.has(t.to))
+      throw new Error(`Workflow '${def.name}': transition '${t.name}' references unknown state '${t.to}'`)
   }
 
   const stateMap      = new Map(def.states.map(s => [s.name, s]))
@@ -37,12 +38,11 @@ export function defineWorkflow(def: WorkflowDef): WorkflowInstance {
     name:    def.name,
     initial: def.initial,
 
-    getState: (name) => stateMap.get(name),
-
+    getState:      (name) => stateMap.get(name),
     getTransition: (name) => transitionMap.get(name),
 
     async availableTransitions(currentState, ctx = {}) {
-      const matching = def.transitions.filter(t => fromMatches(t, currentState))
+      const matching  = def.transitions.filter(t => fromMatches(t, currentState))
       const available: TransitionDef[] = []
       for (const t of matching) {
         if (!t.guards?.length) { available.push(t); continue }
@@ -63,23 +63,33 @@ export function defineWorkflow(def: WorkflowDef): WorkflowInstance {
     async transition(name, currentState, ctx = {}): Promise<TransitionResult> {
       const t = transitionMap.get(name)
       if (!t || !fromMatches(t, currentState)) {
-        return {
-          ok:      false,
-          reason:  'invalid_transition',
-          message: `Transition '${name}' is not valid from state '${currentState}'`,
-        }
+        return { ok: false, reason: 'invalid_transition',
+          message: `Transition '${name}' is not valid from state '${currentState}'` }
       }
       if (t.guards?.length) {
         const { passed, message } = await runGuards(t.guards, ctx)
         if (!passed) return { ok: false, reason: 'guard_failed', message }
       }
+
+      // Run side effects: onTransition → onEnter(new state)
+      // Order: guard ✓ → transition confirmed → effects
+      const seCtx: SideEffectContext = { ...ctx, transition: name, fromState: currentState, toState: t.to }
+      try {
+        if (t.onTransition) await t.onTransition(seCtx)
+        const newStateDef = stateMap.get(t.to)
+        if (newStateDef?.onEnter) await newStateDef.onEnter(seCtx)
+      } catch (err) {
+        return { ok: false, reason: 'side_effect_error',
+          message: err instanceof Error ? err.message : 'Side effect failed' }
+      }
+
       return { ok: true, newState: t.to }
     },
 
     toGraph() {
       return {
-        states:      def.states,
-        transitions: def.transitions.map(({ guards: _g, ...rest }) => rest),
+        states:      def.states.map(({ onEnter: _e, ...rest }) => rest),
+        transitions: def.transitions.map(({ guards: _g, onTransition: _t, ...rest }) => rest),
       }
     },
   }

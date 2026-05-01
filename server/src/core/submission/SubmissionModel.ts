@@ -24,6 +24,17 @@ export class SubmissionModel extends ModelBase<typeof form_submissions, FormSubm
     return rows[0] as unknown as FormSubmission
   }
 
+  async setWorkflowState(id: number, workflowState: string): Promise<FormSubmission> {
+    const rows = await db
+      .update(this.table)
+      .set({ workflow_state: workflowState, updated_at: new Date() })
+      .where(eq(this.table.id, id))
+      .returning()
+    const row = rows[0]
+    if (!row) throw new Error(`Submission ${id} not found`)
+    return row as unknown as FormSubmission
+  }
+
   async transition(id: number, to: SubmissionStatus): Promise<FormSubmission> {
     const rows = await db
       .update(this.table)

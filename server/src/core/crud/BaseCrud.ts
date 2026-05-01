@@ -7,6 +7,7 @@ import { defineForm } from '../form/FormDefinition.js'
 import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery, type ListQuery } from './listQuery.js'
+import type { AuditLogger } from '../audit/AuditLogger.js'
 
 export abstract class BaseCrud<
   TTable extends PgTableWithColumns<TableConfig>,
@@ -15,6 +16,7 @@ export abstract class BaseCrud<
 > {
   abstract readonly model: ModelBase<TTable, TInput, TSelect>
   abstract readonly form:  FormDefinition<TInput>
+  protected readonly auditLogger?: AuditLogger
 
   async list(ctx: Context): Promise<Response> {
     const query  = await this.beforeList(parseListQuery(ctx.req.url), ctx)
@@ -39,18 +41,23 @@ export abstract class BaseCrud<
     const body   = await this.beforeCreate(raw, ctx)
     const result = await handleForm(this.form, this.model, body, undefined, this.getValidationContext(ctx))
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
-    await this.afterCreate(result.data, ctx)
-    return ctx.json(ok(result.data), 201)
+    const { data: created } = result as { state: 'created'; data: TSelect }
+    await this.afterCreate(created, ctx)
+    await this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: this.getUserId(ctx), payload: { after: created } })
+    return ctx.json(ok(created), 201)
   }
 
   async update(ctx: Context): Promise<Response> {
     const id     = Number(ctx.req.param('id'))
+    const before = this.auditLogger ? await this.model.get(id) : undefined
     const raw    = await ctx.req.json()
     const body   = await this.beforeUpdate(id, raw, ctx)
     const result = await handleForm(this.form, this.model, body, id, this.getValidationContext(ctx))
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
-    await this.afterUpdate(result.data, ctx)
-    return ctx.json(ok(result.data))
+    const { data: updated } = result as { state: 'updated'; data: TSelect }
+    await this.afterUpdate(updated, ctx)
+    await this.auditLogger?.log({ entity_id: id, action: 'update', user_id: this.getUserId(ctx), payload: { before, after: updated } })
+    return ctx.json(ok(updated))
   }
 
   async partialUpdate(ctx: Context): Promise<Response> {
@@ -76,13 +83,16 @@ export abstract class BaseCrud<
     const patch  = Object.fromEntries(sentFields.map(f => [f.name, (result.data as Record<string, unknown>)[f.name]]))
     const saved  = await this.model.save(patch as TInput, id)
     await this.afterUpdate(saved, ctx)
+    await this.auditLogger?.log({ entity_id: id, action: 'update', user_id: this.getUserId(ctx), payload: { before: existing, patch: sent, after: saved } })
     return ctx.json(ok(saved))
   }
 
   async delete(ctx: Context): Promise<Response> {
-    const id = Number(ctx.req.param('id'))
+    const id     = Number(ctx.req.param('id'))
+    const before = this.auditLogger ? await this.model.get(id) : undefined
     await this.beforeDelete(id, ctx)
     await this.model.delete(id)
+    await this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: this.getUserId(ctx), payload: { before } })
     return ctx.json(ok(null))
   }
 
@@ -103,4 +113,5 @@ export abstract class BaseCrud<
   protected async beforeDelete(_id: number, _ctx: Context):                 Promise<void>      {}
 
   protected getValidationContext(_ctx: Context): ValidationContext { return 'submit' }
+  protected getUserId(_ctx: Context): number | null { return null }
 }
