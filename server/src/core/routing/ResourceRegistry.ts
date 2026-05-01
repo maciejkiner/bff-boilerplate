@@ -1,8 +1,7 @@
 import type { Hono } from 'hono'
 import type { BaseCrud } from '../crud/BaseCrud.js'
-import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
-
-type AnyCrud = BaseCrud<PgTableWithColumns<TableConfig>, Record<string, unknown>, { id: number }>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyCrud = BaseCrud<any, any, any>
 type CrudConstructor = new () => AnyCrud
 
 export class ResourceRegistry {

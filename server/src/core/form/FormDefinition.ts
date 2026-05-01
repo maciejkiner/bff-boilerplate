@@ -24,7 +24,7 @@ export function defineForm<TInput>(
     toFieldMetas:   (ctx) => buildFieldMetas(fields, ctx),
     toSchema:       (ctx) => ({
       fields: buildFieldMetas(fields, ctx),
-      steps:  steps.length ? steps.map(s => ({ name: s.name, label: s.label, fields: s.fields })) : undefined,
+      ...(steps.length ? { steps: steps.map(s => ({ name: s.name, label: s.label, fields: s.fields })) } : {}),
     }),
   }
 }
@@ -48,7 +48,7 @@ function buildZodSchema<T>(fields: FieldDef<T>[], ctx: FormContext<T>): z.ZodTyp
   const shape: Record<string, z.ZodTypeAny> = {}
   for (const field of fields) {
     if (!isVisible(field, ctx)) continue
-    shape[field.name] = fieldToZod(field, resolveRequired(field, ctx))
+    shape[field.name] = fieldToZod(field as FieldDef<unknown>, resolveRequired(field, ctx))
   }
   return z.object(shape) as unknown as z.ZodType<T>
 }

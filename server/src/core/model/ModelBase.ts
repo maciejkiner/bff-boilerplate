@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, gt, gte, isNull, like, lt, lte, sql, SQL } from 'drizzle-orm'
-import { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
+import { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import { db } from '../../db/index.js'
 import type { FilterClause, ListQuery, SortClause } from '../crud/listQuery.js'
 
 export abstract class ModelBase<
-  TTable extends PgTableWithColumns<TableConfig>,
+  TTable extends PgTableWithColumns<any>,
   TInsert extends Record<string, unknown>,
   TSelect extends { id: number },
 > {

@@ -39,7 +39,7 @@ export async function validateForm<TInput extends Record<string, unknown>>(
     const rows = await db.execute(
       sql`SELECT id FROM ${sql.identifier(check.table)} WHERE ${sql.identifier(check.column)} = ${value} ${excludeId ? sql`AND id != ${excludeId}` : sql``} LIMIT 1`
     )
-    if (rows.rowCount && rows.rowCount > 0) {
+    if (rows.length > 0) {
       return { ok: false, errors: { [check.field]: [`${check.field} already exists`] } }
     }
   }

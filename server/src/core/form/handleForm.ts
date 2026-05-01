@@ -1,11 +1,11 @@
 import { ModelBase } from '../model/ModelBase.js'
 import type { FormDefinition, FormResult, ValidationContext } from './types.js'
-import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
+import type { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import { validateForm } from './validateForm.js'
 
 export async function handleForm<
   TInput extends Record<string, unknown>,
-  TTable extends PgTableWithColumns<TableConfig>,
+  TTable extends PgTableWithColumns<any>,
   TSelect extends { id: number },
 >(
   form: FormDefinition<TInput>,

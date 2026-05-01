@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { PgTableWithColumns, TableConfig } from 'drizzle-orm/pg-core'
+import type { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import type { ModelBase } from '../model/ModelBase.js'
 import type { FormDefinition, ValidationContext } from '../form/types.js'
 import { handleForm } from '../form/handleForm.js'
@@ -10,7 +10,7 @@ import { parseListQuery, type ListQuery } from './listQuery.js'
 import type { AuditLogger } from '../audit/AuditLogger.js'
 
 export abstract class BaseCrud<
-  TTable extends PgTableWithColumns<TableConfig>,
+  TTable extends PgTableWithColumns<any>,
   TInput extends Record<string, unknown>,
   TSelect extends { id: number },
 > {
