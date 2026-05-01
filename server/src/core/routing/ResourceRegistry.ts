@@ -1,8 +1,16 @@
 import type { Hono } from 'hono'
-import type { BaseCrud } from '../crud/BaseCrud.js'
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyCrud = BaseCrud<any, any, any>
-type CrudConstructor = new () => AnyCrud
+import type { Context } from 'hono'
+
+interface CrudLike {
+  schema(ctx: Context):        Promise<Response>
+  list(ctx: Context):          Promise<Response>
+  get(ctx: Context):           Promise<Response>
+  create(ctx: Context):        Promise<Response>
+  update(ctx: Context):        Promise<Response>
+  partialUpdate(ctx: Context): Promise<Response>
+  delete(ctx: Context):        Promise<Response>
+}
+type CrudConstructor = new () => CrudLike
 
 export class ResourceRegistry {
   private resources: Array<{ path: string; Ctor: CrudConstructor }> = []

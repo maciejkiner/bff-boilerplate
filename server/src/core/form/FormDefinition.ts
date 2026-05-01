@@ -48,12 +48,12 @@ function buildZodSchema<T>(fields: FieldDef<T>[], ctx: FormContext<T>): z.ZodTyp
   const shape: Record<string, z.ZodTypeAny> = {}
   for (const field of fields) {
     if (!isVisible(field, ctx)) continue
-    shape[field.name] = fieldToZod(field as FieldDef<unknown>, resolveRequired(field, ctx))
+    shape[field.name] = fieldToZod(field, resolveRequired(field, ctx))
   }
   return z.object(shape) as unknown as z.ZodType<T>
 }
 
-function fieldToZod(field: FieldDef<unknown>, isRequired: boolean): z.ZodTypeAny {
+function fieldToZod<T>(field: FieldDef<T>, isRequired: boolean): z.ZodTypeAny {
   switch (field.type) {
     case 'text':
     case 'textarea': {
