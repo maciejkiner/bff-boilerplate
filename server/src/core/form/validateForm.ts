@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { db } from '../../db/index.js'
 import { isVisible } from './FormDefinition.js'
+import { defaultMessages, interpolate } from './messages.js'
 import type { FormDefinition, ValidationContext } from './types.js'
 
 export type ValidationResult<T> =
@@ -40,7 +41,9 @@ export async function validateForm<TInput extends Record<string, unknown>>(
       sql`SELECT id FROM ${sql.identifier(check.table)} WHERE ${sql.identifier(check.column)} = ${value} ${excludeId ? sql`AND id != ${excludeId}` : sql``} LIMIT 1`
     )
     if (rows.length > 0) {
-      return { ok: false, errors: { [check.field]: [`${check.field} already exists`] } }
+      const msg = form.translate?.('unique', { field: check.field })
+        ?? interpolate(defaultMessages.unique, { field: check.field })
+      return { ok: false, errors: { [check.field]: [msg] } }
     }
   }
 
@@ -50,6 +53,24 @@ export async function validateForm<TInput extends Record<string, unknown>>(
       const key = rule.errorField ?? rule.fields[0] ?? '_root'
       return { ok: false, errors: { [key]: [msg] } }
     }
+  }
+
+  if (form.asyncValidators.length > 0) {
+    const results = await Promise.all(
+      form.asyncValidators.map(async (v) => {
+        const value = v.field === '_root'
+          ? data
+          : (data as Record<string, unknown>)[v.field]
+        const msg = await v.validate(value, ctx)
+        return msg ? { field: v.field as string, msg } : null
+      }),
+    )
+    const asyncErrors: Record<string, string[]> = {}
+    for (const r of results) {
+      if (!r) continue
+      ;(asyncErrors[r.field] ??= []).push(r.msg)
+    }
+    if (Object.keys(asyncErrors).length) return { ok: false, errors: asyncErrors }
   }
 
   return { ok: true, data }

@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import type { MessageKey, MessageResolver } from './messages.js'
+export type { MessageKey, MessageParams, MessageResolver } from './messages.js'
 
 export type FormState = 'idle' | 'created' | 'updated' | 'error'
 
@@ -31,6 +33,7 @@ interface BaseFieldDef<TValues> {
   required?:     boolean | ((ctx: FormContext<TValues>) => boolean)
   visible?:      boolean | ((ctx: FormContext<TValues>) => boolean)
   defaultValue?: unknown | ((ctx: FormContext<TValues>) => unknown)
+  messages?:     Partial<Record<MessageKey, string>>
 }
 
 export interface TextFieldDef<T>     extends BaseFieldDef<T> { type: 'text';     minLength?: number; maxLength?: number; unique?: UniqueCheck }
@@ -68,6 +71,13 @@ export type FieldDef<T> =
   | DateFieldDef<T>
   | RichtextFieldDef<T>
   | RelationFieldDef<T>
+
+// ── Async validators ───────────────────────────────────────────────────────────
+
+export interface AsyncValidator<TInput> {
+  field:    keyof TInput & string | '_root'
+  validate: (value: unknown, ctx: FormContext<TInput>) => Promise<string | null>
+}
 
 // ── Cross-field validation ─────────────────────────────────────────────────────
 
@@ -113,6 +123,8 @@ export interface FormDefinition<TInput> {
   fields:           FieldDef<TInput>[]
   steps:            StepDef<TInput>[]
   crossFieldRules:  CrossFieldRule<TInput>[]
+  asyncValidators:  AsyncValidator<TInput>[]
+  translate?:       MessageResolver
   toZodSchema(ctx: FormContext<TInput>): z.ZodType<TInput>
   toUniqueChecks(ctx: FormContext<TInput>): UniqueCheck[]
   toFieldMetas(ctx?: Partial<FormContext<TInput>>): FieldMeta[]
