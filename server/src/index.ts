@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { ResourceRegistry } from './core/routing/index.js'
 import { errorHandler } from './middleware/errorHandler.js'
+import { authMiddleware } from './middleware/auth.js'
 import { CompaniesResource } from './resources/companies/resource.js'
 
 const app = new Hono()
@@ -14,8 +15,11 @@ app.onError(errorHandler)
 
 app.use('/static/*', serveStatic({ root: '../client/dist', rewriteRequestPath: p => p.replace('/static', '') }))
 
-// Health check
+// Health check — public
 app.get('/health', ctx => ctx.json({ ok: true }))
+
+// All other routes require a valid JWT
+app.use('*', authMiddleware)
 
 // Register resources — each auto-wires GET/POST/PUT/DELETE routes
 const registry = new ResourceRegistry()

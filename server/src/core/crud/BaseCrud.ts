@@ -113,5 +113,7 @@ export abstract class BaseCrud<
   protected async beforeDelete(_id: number, _ctx: Context):                 Promise<void>      {}
 
   protected getValidationContext(_ctx: Context): ValidationContext { return 'submit' }
-  protected getUserId(_ctx: Context): number | null { return null }
+  protected getUserId(ctx: Context): number | null {
+    return (ctx.get('user') as { id: number } | undefined)?.id ?? null
+  }
 }

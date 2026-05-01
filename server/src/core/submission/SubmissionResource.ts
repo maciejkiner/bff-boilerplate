@@ -202,8 +202,12 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
 
   // ── Hooks ─────────────────────────────────────────────────────────────────────
 
-  protected getCreatedBy(_ctx: Context): number | null { return null }
-  protected getUserId(_ctx: Context):    number | null { return null }
+  protected getCreatedBy(ctx: Context): number | null {
+    return (ctx.get('user') as { id: number } | undefined)?.id ?? null
+  }
+  protected getUserId(ctx: Context): number | null {
+    return (ctx.get('user') as { id: number } | undefined)?.id ?? null
+  }
 
   protected buildWorkflowContext(ctx: Context, row: FormSubmission): import('../workflow/types.js').WorkflowContext {
     const user = ctx.get('user') as { id: number; role: string } | undefined
