@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type {
   CrossFieldRule, FieldDef, FieldMeta, FormContext, FormDefinition, FormSchema,
-  StepDef, UniqueCheck,
+  RelationFieldDef, StepDef, UniqueCheck,
 } from './types.js'
 
 export interface DefineFormOptions<TInput> {
@@ -83,6 +83,26 @@ function fieldToZod<T>(field: FieldDef<T>, isRequired: boolean): z.ZodTypeAny {
       const s = z.enum(values)
       return isRequired ? s : s.optional()
     }
+    case 'date': {
+      const min = 'min' in field ? field.min : undefined
+      const max = 'max' in field ? field.max : undefined
+      const base = z.string().date('Invalid date (expected YYYY-MM-DD)')
+      const withMin = min ? base.refine(v => v >= min, `Date must be on or after ${min}`) : base
+      const s: z.ZodTypeAny = max ? withMin.refine(v => v <= max, `Date must be on or before ${max}`) : withMin
+      return isRequired ? s : s.optional()
+    }
+    case 'richtext': {
+      let s = z.string()
+      if ('minLength' in field && field.minLength) s = s.min(field.minLength, `Min ${field.minLength} characters`)
+      if ('maxLength' in field && field.maxLength) s = s.max(field.maxLength, `Max ${field.maxLength} characters`)
+      return isRequired ? s.min(1, 'Required') : s.optional()
+    }
+    case 'relation': {
+      const id = z.number().int().positive()
+      return (field as RelationFieldDef<T>).multiple
+        ? (isRequired ? z.array(id).min(1, 'Required') : z.array(id).optional())
+        : (isRequired ? id : id.optional())
+    }
   }
 }
 
@@ -113,6 +133,10 @@ function buildFieldMetas<T>(
       if (field.placeholder)                   meta.placeholder = field.placeholder
       if (required !== undefined)              meta.required    = required
       if ('options' in field && field.options) meta.options     = field.options
+      if (field.type === 'relation') {
+        const r = field as RelationFieldDef<T>
+        meta.relation = { ...r.relation, ...(r.multiple ? { multiple: true } : {}) }
+      }
       return meta
     })
 }

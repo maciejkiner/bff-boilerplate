@@ -22,7 +22,7 @@ export interface FormContext<TValues = Record<string, unknown>> {
 
 // ── Field types ────────────────────────────────────────────────────────────────
 
-export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
+export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea' | 'date' | 'richtext' | 'relation'
 
 interface BaseFieldDef<TValues> {
   name:          keyof TValues & string
@@ -40,6 +40,22 @@ export interface TextareaFieldDef<T> extends BaseFieldDef<T> { type: 'textarea';
 export interface NumberFieldDef<T>   extends BaseFieldDef<T> { type: 'number';   min?: number; max?: number }
 export interface BooleanFieldDef<T>  extends BaseFieldDef<T> { type: 'boolean' }
 export interface SelectFieldDef<T>   extends BaseFieldDef<T> { type: 'select';   options: { value: string; label: string }[] }
+export interface DateFieldDef<T>     extends BaseFieldDef<T> { type: 'date';     min?: string; max?: string }
+export interface RichtextFieldDef<T> extends BaseFieldDef<T> { type: 'richtext'; minLength?: number; maxLength?: number }
+
+// ── Relation field ─────────────────────────────────────────────────────────────
+
+export interface RelationConfig {
+  endpoint:   string
+  labelField: string
+  valueField: string
+}
+
+export interface RelationFieldDef<T> extends BaseFieldDef<T> {
+  type:      'relation'
+  relation:  RelationConfig
+  multiple?: boolean
+}
 
 export type FieldDef<T> =
   | TextFieldDef<T>
@@ -49,6 +65,9 @@ export type FieldDef<T> =
   | NumberFieldDef<T>
   | BooleanFieldDef<T>
   | SelectFieldDef<T>
+  | DateFieldDef<T>
+  | RichtextFieldDef<T>
+  | RelationFieldDef<T>
 
 // ── Cross-field validation ─────────────────────────────────────────────────────
 
@@ -76,6 +95,7 @@ export interface FieldMeta {
   placeholder?: string
   required?:    boolean
   options?:     { value: string; label: string }[]
+  relation?:    RelationConfig & { multiple?: boolean }
 }
 
 export interface StepMeta {
