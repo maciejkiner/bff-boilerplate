@@ -10,6 +10,8 @@ export type MessageKey =
   | 'minValue'
   | 'maxValue'
   | 'unique'
+  | 'arrayMin'
+  | 'arrayMax'
 
 export type MessageParams = Record<string, string | number>
 
@@ -27,6 +29,8 @@ export const defaultMessages: Record<MessageKey, string> = {
   minValue:  'Min value is {min}',
   maxValue:  'Max value is {max}',
   unique:    '{field} already exists',
+  arrayMin:  'At least {min} item(s) required',
+  arrayMax:  'At most {max} item(s) allowed',
 }
 
 export function interpolate(template: string, params?: MessageParams): string {

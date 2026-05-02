@@ -24,16 +24,35 @@ export interface FormContext<TValues = Record<string, unknown>> {
 
 // ── Field types ────────────────────────────────────────────────────────────────
 
-export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea' | 'date' | 'richtext' | 'relation'
+export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea' | 'date' | 'richtext' | 'relation' | 'array' | 'computed' | 'group'
+
+export type RowDef = FieldDef<Record<string, unknown>>
+
+// ── Conditional rules (declarative visibility / required) ──────────────────────
+
+export type ConditionalOp = 'eq' | 'neq' | 'in' | 'notIn'
+
+export interface ConditionalRule {
+  field: string
+  op:    ConditionalOp
+  value: unknown
+}
 
 interface BaseFieldDef<TValues> {
-  name:          keyof TValues & string
-  label:         string
-  placeholder?:  string
-  required?:     boolean | ((ctx: FormContext<TValues>) => boolean)
-  visible?:      boolean | ((ctx: FormContext<TValues>) => boolean)
-  defaultValue?: unknown | ((ctx: FormContext<TValues>) => unknown)
-  messages?:     Partial<Record<MessageKey, string>>
+  name:               keyof TValues & string
+  label:              string
+  placeholder?:       string
+  required?:          boolean | ((ctx: FormContext<TValues>) => boolean)
+  visible?:           boolean | ((ctx: FormContext<TValues>) => boolean)
+  editable?:          boolean | ((ctx: FormContext<TValues>) => boolean)
+  sensitive?:         boolean
+  filterable?:        boolean
+  sortable?:          boolean
+  defaultValue?:      unknown | ((ctx: FormContext<TValues>) => unknown)
+  messages?:          Partial<Record<MessageKey, string>>
+  validators?:        string[]
+  visibleWhenRule?:   ConditionalRule
+  requiredWhenRule?:  ConditionalRule
 }
 
 export interface TextFieldDef<T>     extends BaseFieldDef<T> { type: 'text';     minLength?: number; maxLength?: number; unique?: UniqueCheck }
@@ -45,6 +64,49 @@ export interface BooleanFieldDef<T>  extends BaseFieldDef<T> { type: 'boolean' }
 export interface SelectFieldDef<T>   extends BaseFieldDef<T> { type: 'select';   options: { value: string; label: string }[] }
 export interface DateFieldDef<T>     extends BaseFieldDef<T> { type: 'date';     min?: string; max?: string }
 export interface RichtextFieldDef<T> extends BaseFieldDef<T> { type: 'richtext'; minLength?: number; maxLength?: number }
+
+// ── Computed field ─────────────────────────────────────────────────────────────
+
+export interface ComputedFieldDef<T> {
+  type:     'computed'
+  name:     keyof T & string
+  label:    string
+  compute:  (values: Partial<T>) => unknown
+  visible?: boolean | ((ctx: FormContext<T>) => boolean)
+}
+
+// ── Array field ────────────────────────────────────────────────────────────────
+
+export interface ArrayCrossFieldRule {
+  fields:      string[]
+  validate:    (row: Record<string, unknown>) => string | null
+  errorField?: string
+}
+
+export type ArrayValidateRule = (rows: Record<string, unknown>[]) => string | null
+
+export interface ArrayFieldDef<T> extends BaseFieldDef<T> {
+  type:         'array'
+  fields:       RowDef[]
+  min?:         number
+  max?:         number
+  rowRules?:    ArrayCrossFieldRule[]
+  arrayRules?:  ArrayValidateRule[]
+}
+
+// ── Group field ────────────────────────────────────────────────────────────────
+
+export interface GroupCrossFieldRule {
+  fields:      string[]
+  validate:    (group: Record<string, unknown>) => string | null
+  errorField?: string
+}
+
+export interface FieldGroupDef<T> extends BaseFieldDef<T> {
+  type:   'group'
+  fields: RowDef[]
+  rules?: GroupCrossFieldRule[]
+}
 
 // ── Relation field ─────────────────────────────────────────────────────────────
 
@@ -71,6 +133,9 @@ export type FieldDef<T> =
   | DateFieldDef<T>
   | RichtextFieldDef<T>
   | RelationFieldDef<T>
+  | ArrayFieldDef<T>
+  | FieldGroupDef<T>
+  | ComputedFieldDef<T>
 
 // ── Async validators ───────────────────────────────────────────────────────────
 
@@ -99,13 +164,20 @@ export interface StepDef<TInput> {
 // ── FormDefinition ─────────────────────────────────────────────────────────────
 
 export interface FieldMeta {
-  name:         string
-  label:        string
-  type:         FieldType
-  placeholder?: string
-  required?:    boolean
-  options?:     { value: string; label: string }[]
-  relation?:    RelationConfig & { multiple?: boolean }
+  name:           string
+  label:          string
+  type:           FieldType
+  placeholder?:   string
+  required?:      boolean
+  readonly?:      boolean
+  computed?:      boolean
+  options?:       { value: string; label: string }[]
+  relation?:      RelationConfig & { multiple?: boolean }
+  fields?:        FieldMeta[]
+  min?:           number
+  max?:           number
+  visible_when?:  ConditionalRule
+  required_when?: ConditionalRule
 }
 
 export interface StepMeta {
@@ -129,6 +201,7 @@ export interface FormDefinition<TInput> {
   toUniqueChecks(ctx: FormContext<TInput>): UniqueCheck[]
   toFieldMetas(ctx?: Partial<FormContext<TInput>>): FieldMeta[]
   toSchema(ctx?: Partial<FormContext<TInput>>): FormSchema
+  toRedacted(data: unknown, ctx?: Partial<FormContext<TInput>>): Record<string, unknown>
 }
 
 export interface UniqueCheck {

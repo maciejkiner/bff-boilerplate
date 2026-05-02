@@ -1,13 +1,12 @@
-import { integer, jsonb, pgTable, serial, varchar, timestamp } from 'drizzle-orm/pg-core'
+import { integer, jsonb, pgTable, serial, varchar, timestamp, boolean } from 'drizzle-orm/pg-core'
 
 // Example schema — extend with your own tables
-export const companies = pgTable('companies', {
+export const users = pgTable('users', {
   id:         serial('id').primaryKey(),
-  name:       varchar('name', { length: 100 }).notNull(),
-  nip:        varchar('nip',  { length: 20 }).unique(),
-  city:       varchar('city', { length: 100 }),
-  street:     varchar('street', { length: 200 }),
-  zip_code:   varchar('zip_code', { length: 10 }),
+  email:      varchar('email', { length: 200 }).notNull().unique(),
+  name:       varchar('name',  { length: 100 }).notNull(),
+  role:       varchar('role',  { length: 50  }).notNull().default('user'),
+  active:     boolean('active').notNull().default(true),
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -36,9 +35,13 @@ export const form_submissions = pgTable('form_submissions', {
   status:     varchar('status',     { length: 20  }).notNull().default('draft'),
   data:       jsonb('data').notNull().default({}),
   created_by:     integer('created_by'),
+  assigned_to:    integer('assigned_to'),
   current_step:   varchar('current_step',   { length: 100 }),
-  workflow_state: varchar('workflow_state', { length: 100 }),
+  workflow_state:            varchar('workflow_state',            { length: 100 }),
+  workflow_state_entered_at: timestamp('workflow_state_entered_at'),
+  workflow_branches:         jsonb('workflow_branches'),
   created_at:   timestamp('created_at').defaultNow().notNull(),
   updated_at:   timestamp('updated_at').defaultNow().notNull(),
+  deleted_at:   timestamp('deleted_at'),
   version:      integer('version').notNull().default(1),
 })

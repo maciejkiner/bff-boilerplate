@@ -2,13 +2,15 @@ import type { Hono } from 'hono'
 import type { Context } from 'hono'
 
 interface CrudLike {
-  schema(ctx: Context):        Promise<Response>
-  list(ctx: Context):          Promise<Response>
-  get(ctx: Context):           Promise<Response>
-  create(ctx: Context):        Promise<Response>
-  update(ctx: Context):        Promise<Response>
-  partialUpdate(ctx: Context): Promise<Response>
-  delete(ctx: Context):        Promise<Response>
+  schema(ctx: Context):         Promise<Response>
+  evaluateSchema(ctx: Context): Promise<Response>
+  list(ctx: Context):           Promise<Response>
+  get(ctx: Context):            Promise<Response>
+  create(ctx: Context):         Promise<Response>
+  update(ctx: Context):         Promise<Response>
+  partialUpdate(ctx: Context):  Promise<Response>
+  delete(ctx: Context):         Promise<Response>
+  bulk(ctx: Context):           Promise<Response>
 }
 type CrudConstructor = new () => CrudLike
 
@@ -25,13 +27,24 @@ export class ResourceRegistry {
       const resource = new Ctor()
       const base = `/${path}`
 
-      app.get(`${base}/schema`,   ctx => resource.schema(ctx))
-      app.get(base,               ctx => resource.list(ctx))
-      app.get(`${base}/:id`,      ctx => resource.get(ctx))
-      app.post(base,              ctx => resource.create(ctx))
-      app.put(`${base}/:id`,      ctx => resource.update(ctx))
-      app.patch(`${base}/:id`,    ctx => resource.partialUpdate(ctx))
-      app.delete(`${base}/:id`,   ctx => resource.delete(ctx))
+      // Detect nested pattern: e.g. "companies/:companyId/contacts"
+      const nestedMatch = path.match(/^.+\/:([^/]+)\/.+$/)
+      const parentParam = nestedMatch?.[1] ?? null
+
+      const wrap = (handler: (ctx: Context) => Promise<Response>) =>
+        parentParam
+          ? (ctx: Context) => { ;(ctx as any).set('_parentId', Number(ctx.req.param(parentParam))); return handler(ctx) }
+          : handler
+
+      app.get(`${base}/schema`,         wrap(ctx => resource.schema(ctx)))
+      app.post(`${base}/schema/evaluate`, wrap(ctx => resource.evaluateSchema(ctx)))
+      app.get(base,               wrap(ctx => resource.list(ctx)))
+      app.get(`${base}/:id`,      wrap(ctx => resource.get(ctx)))
+      app.post(base,              wrap(ctx => resource.create(ctx)))
+      app.post(`${base}/bulk`,    wrap(ctx => resource.bulk(ctx)))
+      app.put(`${base}/:id`,      wrap(ctx => resource.update(ctx)))
+      app.patch(`${base}/:id`,    wrap(ctx => resource.partialUpdate(ctx)))
+      app.delete(`${base}/:id`,   wrap(ctx => resource.delete(ctx)))
     }
   }
 }

@@ -18,4 +18,7 @@ RUN cd server && npm run build && cd ../client && npm run build
 
 EXPOSE 3000
 
-CMD ["node", "server/dist/index.js"]
+COPY server/entrypoint.sh /app/server/entrypoint.sh
+RUN chmod +x /app/server/entrypoint.sh
+
+CMD ["/app/server/entrypoint.sh"]

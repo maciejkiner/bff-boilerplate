@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import type {
-  AsyncValidator, CrossFieldRule, FieldDef, FieldMeta, FormContext, FormDefinition, FormSchema,
-  MessageKey, MessageResolver, RelationFieldDef, StepDef, UniqueCheck,
+  ArrayFieldDef, AsyncValidator, ComputedFieldDef, ConditionalRule, CrossFieldRule,
+  FieldDef, FieldGroupDef, FieldMeta, FormContext, FormDefinition, FormSchema,
+  MessageKey, MessageResolver, RelationFieldDef, RowDef, StepDef, UniqueCheck,
 } from './types.js'
 import { makeResolver } from './messages.js'
 
@@ -35,10 +36,11 @@ export function defineForm<TInput>(
       fields: buildFieldMetas(fields, ctx),
       ...(steps.length ? { steps: steps.map(s => ({ name: s.name, label: s.label, fields: s.fields })) } : {}),
     }),
+    toRedacted:     (data, ctx) => buildRedacted(fields, data, ctx ?? {}),
   }
 }
 
-// ── Visibility / required helpers ──────────────────────────────────────────────
+// ── Visibility / required / editable helpers ───────────────────────────────────
 
 export function isVisible<T>(field: FieldDef<T>, ctx: Partial<FormContext<T>>): boolean {
   if (field.visible === undefined || field.visible === true) return true
@@ -46,7 +48,15 @@ export function isVisible<T>(field: FieldDef<T>, ctx: Partial<FormContext<T>>): 
   return field.visible(ctx as FormContext<T>)
 }
 
+export function isEditable<T>(field: FieldDef<T>, ctx: Partial<FormContext<T>>): boolean {
+  if (field.type === 'computed') return false
+  if (field.editable === undefined || field.editable === true) return true
+  if (field.editable === false) return false
+  return field.editable(ctx as FormContext<T>)
+}
+
 function resolveRequired<T>(field: FieldDef<T>, ctx: FormContext<T>): boolean {
+  if (field.type === 'computed') return false
   if (typeof field.required === 'function') return field.required(ctx)
   return field.required === true
 }
@@ -61,14 +71,22 @@ function buildZodSchema<T>(
 ): z.ZodType<T> {
   const shape: Record<string, z.ZodTypeAny> = {}
   for (const field of fields) {
+    if (field.type === 'computed') continue
     if (!isVisible(field, ctx)) continue
-    const resolve = makeResolver(field.messages, formMessages, translate)
-    shape[field.name] = fieldToZod(field, resolveRequired(field, ctx), resolve)
+    if (!isEditable(field, ctx)) continue
+    const resolve = makeResolver((field as { messages?: Partial<Record<MessageKey, string>> }).messages, formMessages, translate)
+    shape[field.name] = fieldToZod(field, resolveRequired(field, ctx), resolve, formMessages, translate)
   }
   return z.object(shape) as unknown as z.ZodType<T>
 }
 
-function fieldToZod<T>(field: FieldDef<T>, isRequired: boolean, resolve: MessageResolver): z.ZodTypeAny {
+function fieldToZod<T>(
+  field:        FieldDef<T>,
+  isRequired:   boolean,
+  resolve:      MessageResolver,
+  formMessages?: Partial<Record<MessageKey, string>>,
+  translate?:    MessageResolver,
+): z.ZodTypeAny {
   switch (field.type) {
     case 'text':
     case 'textarea': {
@@ -118,6 +136,67 @@ function fieldToZod<T>(field: FieldDef<T>, isRequired: boolean, resolve: Message
         ? (isRequired ? z.array(id).min(1, resolve('required')) : z.array(id).optional())
         : (isRequired ? id : id.optional())
     }
+    case 'computed':
+      return z.never()
+    case 'array': {
+      const a = field as unknown as ArrayFieldDef<Record<string, unknown>>
+      const rowCtx: FormContext<Record<string, unknown>> = { values: {}, validationContext: 'submit' }
+      const rowShape: Record<string, z.ZodTypeAny> = {}
+      for (const sub of a.fields) {
+        const subResolve = makeResolver((sub as { messages?: Partial<Record<MessageKey, string>> }).messages, formMessages, translate)
+        rowShape[sub.name as string] = fieldToZod(sub as FieldDef<Record<string, unknown>>, resolveRequired(sub as FieldDef<Record<string, unknown>>, rowCtx), subResolve, formMessages, translate)
+      }
+      const rowSchema = z.object(rowShape)
+      let baseArr = z.array(rowSchema)
+      if (a.min !== undefined) baseArr = baseArr.min(a.min, resolve('arrayMin', { min: a.min }))
+      if (a.max !== undefined) baseArr = baseArr.max(a.max, resolve('arrayMax', { max: a.max }))
+      const hasRules = (a.rowRules?.length ?? 0) > 0 || (a.arrayRules?.length ?? 0) > 0
+      const arr: z.ZodTypeAny = hasRules
+        ? baseArr.superRefine((rows, zodCtx) => {
+            if (a.rowRules) {
+              rows.forEach((row, i) => {
+                for (const rule of a.rowRules!) {
+                  const msg = rule.validate(row)
+                  if (msg !== null) {
+                    const errField = rule.errorField ?? rule.fields[0] ?? '_root'
+                    zodCtx.addIssue({ code: z.ZodIssueCode.custom, path: [i, errField], message: msg })
+                  }
+                }
+              })
+            }
+            if (a.arrayRules) {
+              for (const rule of a.arrayRules!) {
+                const msg = rule(rows)
+                if (msg !== null) zodCtx.addIssue({ code: z.ZodIssueCode.custom, message: msg })
+              }
+            }
+          })
+        : baseArr
+      return isRequired ? arr : arr.optional()
+    }
+    case 'group': {
+      const g = field as unknown as FieldGroupDef<Record<string, unknown>>
+      const grpCtx: FormContext<Record<string, unknown>> = { values: {}, validationContext: 'submit' }
+      const grpShape: Record<string, z.ZodTypeAny> = {}
+      for (const sub of g.fields) {
+        const subResolve = makeResolver((sub as { messages?: Partial<Record<MessageKey, string>> }).messages, formMessages, translate)
+        grpShape[sub.name as string] = fieldToZod(sub as FieldDef<Record<string, unknown>>, resolveRequired(sub as FieldDef<Record<string, unknown>>, grpCtx), subResolve, formMessages, translate)
+      }
+      const grpSchema = z.object(grpShape)
+      const hasRules = (g.rules?.length ?? 0) > 0
+      const withRules: z.ZodTypeAny = hasRules
+        ? grpSchema.superRefine((data, zodCtx) => {
+            for (const rule of g.rules!) {
+              const msg = rule.validate(data)
+              if (msg !== null) {
+                const errField = rule.errorField ?? rule.fields[0] ?? '_root'
+                zodCtx.addIssue({ code: z.ZodIssueCode.custom, path: [errField], message: msg })
+              }
+            }
+          })
+        : grpSchema
+      return isRequired ? withRules : withRules.optional()
+    }
   }
 }
 
@@ -140,18 +219,65 @@ function buildFieldMetas<T>(
 ): FieldMeta[] {
   return fields
     .filter(field => isVisible(field, ctx ?? {}))
-    .map(field => {
-      const required = typeof field.required === 'function'
-        ? (ctx ? field.required(ctx as FormContext<T>) : undefined)
-        : field.required
-      const meta: FieldMeta = { name: field.name, label: field.label, type: field.type }
-      if (field.placeholder)                   meta.placeholder = field.placeholder
-      if (required !== undefined)              meta.required    = required
-      if ('options' in field && field.options) meta.options     = field.options
-      if (field.type === 'relation') {
-        const r = field as RelationFieldDef<T>
-        meta.relation = { ...r.relation, ...(r.multiple ? { multiple: true } : {}) }
+    .map(field => buildSingleFieldMeta(field, ctx))
+}
+
+function buildSingleFieldMeta<T>(field: FieldDef<T>, ctx?: Partial<FormContext<T>>): FieldMeta {
+  if (field.type === 'computed') {
+    const cf = field as ComputedFieldDef<T>
+    return { name: cf.name, label: cf.label, type: 'computed', computed: true, readonly: true }
+  }
+  const required = typeof field.required === 'function'
+    ? (ctx ? field.required(ctx as FormContext<T>) : undefined)
+    : field.required
+  const editable = typeof field.editable === 'function'
+    ? (ctx ? field.editable(ctx as FormContext<T>) : undefined)
+    : field.editable
+  const meta: FieldMeta = { name: field.name, label: field.label, type: field.type }
+  if ('placeholder' in field && field.placeholder)  meta.placeholder    = field.placeholder
+  if (required !== undefined)                        meta.required       = required
+  if (editable === false)                            meta.readonly       = true
+  if ('options' in field && field.options)           meta.options        = field.options
+  if ('visibleWhenRule' in field && field.visibleWhenRule)   meta.visible_when  = field.visibleWhenRule as ConditionalRule
+  if ('requiredWhenRule' in field && field.requiredWhenRule) meta.required_when = field.requiredWhenRule as ConditionalRule
+  if (field.type === 'relation') {
+    const r = field as RelationFieldDef<T>
+    meta.relation = { ...r.relation, ...(r.multiple ? { multiple: true } : {}) }
+  }
+  if (field.type === 'array') {
+    const a = field as unknown as ArrayFieldDef<T>
+    meta.fields = a.fields.map(f => buildSingleFieldMeta(f as unknown as FieldDef<T>, {}))
+    if (a.min !== undefined) meta.min = a.min
+    if (a.max !== undefined) meta.max = a.max
+  }
+  if (field.type === 'group') {
+    const g = field as unknown as FieldGroupDef<T>
+    meta.fields = g.fields.map(f => buildSingleFieldMeta(f as unknown as FieldDef<T>, {}))
+  }
+  return meta
+}
+
+// ── Redaction (sensitive fields) ───────────────────────────────────────────────
+
+function buildRedacted<T>(
+  fields: FieldDef<T>[],
+  data:   unknown,
+  ctx:    Partial<FormContext<T>>,
+): Record<string, unknown> {
+  const out = { ...(typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}) }
+  for (const field of fields) {
+    if (field.type === 'computed') {
+      if (isVisible(field, ctx)) {
+        out[field.name] = (field as ComputedFieldDef<T>).compute(out as Partial<T>)
       }
-      return meta
-    })
+      continue
+    }
+    if (isVisible(field, ctx)) continue
+    if ((field as { sensitive?: boolean }).sensitive) {
+      out[field.name] = null
+    } else {
+      delete out[field.name]
+    }
+  }
+  return out
 }

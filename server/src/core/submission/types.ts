@@ -6,10 +6,14 @@ export interface FormSubmission {
   status:       SubmissionStatus
   data:         Record<string, unknown>
   created_by:     number | null
+  assigned_to:    number | null
   current_step:   string | null
-  workflow_state: string | null
+  workflow_state:            string | null
+  workflow_state_entered_at: Date | null
+  workflow_branches:         Record<string, string> | null
   created_at:   Date
   updated_at:   Date
+  deleted_at:   Date | null
   version:      number
 }
 
@@ -18,6 +22,7 @@ export type FormSubmissionInsert = {
   status?:      SubmissionStatus
   data:         Record<string, unknown>
   created_by?:  number | null
+  assigned_to?:  number | null
   current_step?: string | null
 }
 

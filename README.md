@@ -690,3 +690,441 @@ npm run dev -w client     # client only
 npm run build -w server
 npm run build -w client
 ```
+
+---
+
+## Advanced Field Types
+
+### Array fields (repeatable rows)
+
+```ts
+import { array, text, number } from './core/form/index.js'
+
+array<OrderInsert>('items', {
+  label: 'Line items',
+  min:   1,
+  fields: [
+    text<LineItem>('sku',      { label: 'SKU',      required: true }),
+    number<LineItem>('qty',    { label: 'Qty',      required: true, min: 1 }),
+    number<LineItem>('price',  { label: 'Price',    required: true, min: 0 }),
+  ],
+  rowRules: [{
+    fields:   ['qty', 'price'],
+    validate: row => (row.qty as number) * (row.price as number) > 100_000
+      ? 'Line total exceeds limit' : null,
+  }],
+  arrayRules: [rows => rows.length > 50 ? 'Maximum 50 line items' : null],
+})
+```
+
+### Group fields (namespaced nested object)
+
+Groups produce a single nested object value (`values.address = { street, city, zip }`). Sub-fields validate as a unit.
+
+```ts
+import { group, text } from './core/form/index.js'
+
+group<CompanyInsert>('address', {
+  label:  'Address',
+  fields: [
+    text<Address>('street',  { label: 'Street',   required: true }),
+    text<Address>('city',    { label: 'City',     required: true }),
+    text<Address>('zip',     { label: 'ZIP code' }),
+  ],
+  rules: [{
+    fields:   ['street', 'city'],
+    validate: g => !g.street && g.city ? 'Street is required when city is set' : null,
+  }],
+})
+```
+
+Schema endpoint serializes the group as `{ type: 'group', fields: [...] }`.
+
+### Computed fields
+
+Read-only values derived from other fields. Not validated, not saved to the database.
+
+```ts
+import { computed, number } from './core/form/index.js'
+
+number<OrderInsert>('price', { label: 'Unit price', required: true }),
+number<OrderInsert>('qty',   { label: 'Qty',        required: true }),
+computed<OrderInsert>('total', 'Total', v => ((v.price ?? 0) * (v.qty ?? 0)).toFixed(2)),
+```
+
+`computed` fields appear in API responses and schema output but are excluded from the Zod schema, unique checks, and payload saving.
+
+### Conditional helpers
+
+`visibleWhen` / `requiredWhen` produce both a runtime callback **and** a serializable JSON rule (`visible_when` / `required_when` in schema output), so the frontend can apply the same logic declaratively:
+
+```ts
+import { visibleWhen, requiredWhen, text, select } from './core/form/index.js'
+
+select<LeaveInput>('type', {
+  label:   'Leave type',
+  options: [{ value: 'sick', label: 'Sick leave' }, { value: 'annual', label: 'Annual' }],
+  required: true,
+}),
+text<LeaveInput>('medical_cert_number', {
+  label: 'Medical certificate #',
+  ...visibleWhen<LeaveInput>('type', 'eq', 'sick'),
+  ...requiredWhen<LeaveInput>('type', 'eq', 'sick'),
+}),
+```
+
+`visibleWhen` supports operators: `eq`, `neq`, `in`, `notIn`.
+
+### Field-level permissions
+
+`visible` and `editable` accept callbacks that receive `FormContext` (including the authenticated user):
+
+```ts
+text<ContractInsert>('salary', {
+  label:     'Salary',
+  sensitive: true,                                        // redacted as null for unauthorised users
+  visible:   ctx => ctx.user?.role === 'hr',              // stripped from response if false
+  editable:  ctx => ctx.user?.role === 'hr',              // included but readonly if false
+})
+```
+
+- `visible: false` — field is removed from API response and Zod schema entirely
+- `editable: false` — field appears in response with `readonly: true` in schema; value is ignored in POST/PUT/PATCH payloads
+- `sensitive: true` — when invisible, value is returned as `null` instead of being deleted (signals "field exists but you can't see it")
+
+---
+
+## Plugin Validators
+
+Register reusable named validators and attach them to any field with `validators: ['name']`.
+
+```ts
+import { validators } from './core/validators/index.js'
+
+// Register a custom validator
+validators.register('postal_code_pl', value => {
+  if (typeof value !== 'string') return 'Invalid postal code'
+  return /^\d{2}-\d{3}$/.test(value) ? null : 'Must match format 00-000'
+})
+
+// Use on a field
+text<AddressInsert>('zip', {
+  label:      'ZIP code',
+  validators: ['postal_code_pl'],
+})
+```
+
+Named validators run after Zod + unique checks + cross-field rules but before async validators. Both sync and async functions are supported.
+
+### Built-in validators
+
+The following are registered automatically when you import from `core/validators/index.js`:
+
+| Name | Description |
+|---|---|
+| `nip` | Polish tax ID (NIP) — 10-digit checksum |
+| `regon` | Polish business registry (REGON) — 9 or 14-digit checksum |
+| `pesel` | Polish personal ID (PESEL) — 11-digit checksum |
+| `iban` | International bank account number — mod-97 checksum |
+| `phone_pl` | Polish phone number — `+48XXXXXXXXX` / `0048XXXXXXXXX` / 9 digits |
+
+---
+
+## Bulk Operations
+
+`POST /:resource/bulk` accepts an array of up to 100 create / update / delete operations executed all-or-nothing:
+
+```bash
+POST /companies/bulk
+{
+  "operations": [
+    { "op": "create", "data": { "name": "Acme" } },
+    { "op": "update", "id": 5, "data": { "city": "Warsaw" } },
+    { "op": "delete", "id": 12 }
+  ]
+}
+```
+
+All operations are validated before any are executed. If any operation fails validation the entire batch is rejected with a 422.
+
+---
+
+## Nested Resources
+
+Register a resource under a parent path — the framework automatically filters by parent ID and validates parent existence:
+
+```ts
+// server/src/resources/contacts/resource.ts
+export class ContactsResource extends BaseCrud<typeof contacts, ContactInsert, Contact> {
+  readonly model       = new ContactModel()
+  readonly form        = contactForm
+  readonly parentField = 'company_id'   // FK column to inject
+}
+
+// server/src/index.ts
+registry
+  .register('companies', CompaniesResource)
+  .register('companies/:companyId/contacts', ContactsResource)
+  .mount(app)
+```
+
+This gives you `GET /companies/3/contacts` (returns only contacts for company 3), `POST /companies/3/contacts` (injects `company_id: 3` before validation), etc. Override `parentExists()` to add custom parent validation logic.
+
+---
+
+## Response Shaping
+
+Append `?fields=` to any list or detail endpoint to receive only the specified columns:
+
+```bash
+GET /companies?fields=id,name,city
+# → [{ "id": 1, "name": "Acme", "city": "Warsaw" }, ...]
+
+GET /companies/1?fields=id,name
+# → { "id": 1, "name": "Acme" }
+```
+
+---
+
+## Dynamic Schema Evaluation
+
+`POST /:resource/schema/evaluate` returns the form schema computed against a specific set of values — useful for driving conditional visibility on the frontend without custom endpoints:
+
+```bash
+POST /leave-requests/schema/evaluate
+{ "values": { "type": "sick" } }
+# → schema with medical_cert_number marked visible + required
+```
+
+---
+
+## Filter Operators (complete list)
+
+| Operator | Meaning |
+|---|---|
+| *(none / default)* | `eq` — exact match |
+| `eq` | exact match |
+| `neq` | not equal |
+| `like` | `LIKE %value%` |
+| `in` | column IN (comma-separated values) |
+| `gt` / `gte` | greater than / greater or equal |
+| `lt` / `lte` | less than / less or equal |
+| `isNull` | column IS NULL (value ignored) |
+
+```bash
+GET /companies?filter[status][neq]=archived
+GET /companies?filter[city][in]=Warsaw,Kraków,Gdańsk
+```
+
+Fields must have `filterable: true` on their field definition to be accepted; unknown fields are silently ignored.
+
+---
+
+## Audit Log
+
+Every `BaseCrud` create / update / delete and every workflow transition is automatically logged when `auditLogger` is set on the resource. Read the log via the built-in endpoints:
+
+```bash
+GET /audit                                        # all events, paginated
+GET /audit?entity=companies&action=update         # filtered
+GET /audit?userId=5&from=2025-01-01&to=2025-06-01 # date range
+GET /audit/companies/42                           # all events for a specific record
+```
+
+Query params: `entity`, `entityId`, `action`, `userId`, `from`, `to`, `page`, `pageSize`.
+
+Each event: `{ id, entity_type, entity_id, action, user_id, payload, timestamp }`.
+
+---
+
+## Workflow Engine — Advanced
+
+### State timeouts (4.6)
+
+Attach a TTL to any state. `WorkflowScheduler` polls the database and fires the `onTimeout` transition automatically:
+
+```ts
+import { defineWorkflow, WorkflowScheduler } from './core/workflow/index.js'
+
+const reviewWorkflow = defineWorkflow({
+  name: 'review',
+  initial: 'pending',
+  states: [
+    { name: 'pending', type: 'initial' },
+    {
+      name:      'under_review',
+      type:      'intermediate',
+      ttl:       48 * 3600,          // 48 hours in seconds
+      onTimeout: 'escalate',         // transition name to fire on expiry
+    },
+    { name: 'escalated', type: 'intermediate' },
+    { name: 'approved',  type: 'final' },
+  ],
+  transitions: [
+    { name: 'start',    from: 'pending',      to: 'under_review' },
+    { name: 'escalate', from: 'under_review', to: 'escalated' },
+    { name: 'approve',  from: ['under_review', 'escalated'], to: 'approved' },
+  ],
+})
+
+// Start the scheduler (e.g. in index.ts)
+new WorkflowScheduler(reviewWorkflow, 'review_request').start(60_000) // check every minute
+```
+
+`workflow_state_entered_at` is recorded automatically on every workflow state change.
+
+### Parallel branches (4.7)
+
+States can fan out into multiple independent approval branches. The merge fires automatically when the configured condition (`'all'` or `'any'`) is met:
+
+```ts
+{
+  name:            'awaiting_approvals',
+  type:            'intermediate',
+  mergeWhen:       'all',                // 'all' branches final → merge
+  mergeTransition: 'complete',           // transition to fire on merge
+  branches: [
+    {
+      name:    'manager',
+      initial: 'pending',
+      states:  [
+        { name: 'pending',  type: 'initial' },
+        { name: 'approved', type: 'final'   },
+        { name: 'rejected', type: 'final'   },
+      ],
+      transitions: [
+        { name: 'approve', from: 'pending', to: 'approved' },
+        { name: 'reject',  from: 'pending', to: 'rejected' },
+      ],
+    },
+    {
+      name:    'legal',
+      initial: 'pending',
+      states:  [/* same shape */],
+      transitions: [/* same shape */],
+    },
+  ],
+},
+```
+
+Branch transition endpoints (added automatically by `SubmissionResource`):
+
+```bash
+GET  /submissions/:id/branches/:branch/transitions         # available transitions
+POST /submissions/:id/branches/:branch/transitions/:action # fire a branch transition
+```
+
+Branch states are stored as `workflow_branches: { manager: 'pending', legal: 'approved' }` on the submission. When the merge fires, the main workflow state advances and branch states reset.
+
+### Workflow visualization (4.8)
+
+```bash
+GET /workflows                    # list registered workflow names
+GET /workflows/:name/graph        # full state/transition graph (guards stripped)
+```
+
+The graph response is ready for frontend diagram rendering (states as nodes, transitions as edges). Branch definitions are included in states that define them.
+
+```ts
+const graph = leaveWorkflow.toGraph()
+// {
+//   states:      [{ name, type, label?, ttl?, branches? }, ...],
+//   transitions: [{ name, from, to, label? }, ...],
+// }
+```
+
+---
+
+## Workflow Submission Endpoints (complete list)
+
+When `SubmissionResource` has a `workflow` attached, these endpoints are available in addition to the standard CRUD:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/:id/transitions` | Available transitions for current user |
+| `POST` | `/:id/transitions/:action` | Execute a workflow transition |
+| `GET` | `/:id/branches/:branch/transitions` | Available branch transitions |
+| `POST` | `/:id/branches/:branch/transitions/:action` | Execute a branch transition |
+| `POST` | `/:id/assign` | Manually set `assigned_to` |
+| `PATCH` | `/:id/steps/:step` | Save data for a wizard step |
+| `GET` | `/:id/history` | Full version history |
+| `GET` | `/:id/history/:version` | Snapshot at a specific version |
+
+---
+
+## Testing Utilities
+
+All testing helpers are exported from `server/src/core/testing/index.ts`.
+
+### FormTestKit — sync form validation assertions
+
+```ts
+import { FormTestKit } from '../core/testing/index.js'
+
+FormTestKit.fill(userForm, { name: '', email: 'not-an-email' })
+  .expectInvalid()
+  .expectError('email', 'email')
+  .expectNoError('name')
+
+FormTestKit.fill(userForm, { name: 'Jan', email: 'jan@test.pl' })
+  .withContext({ user: { id: 1, role: 'admin' } })
+  .expectValid()
+  .expectFieldVisible('salary')   // only visible for admins
+```
+
+### WorkflowTestKit — workflow transition assertions
+
+```ts
+import { WorkflowTestKit } from '../core/testing/index.js'
+
+const wf = WorkflowTestKit.start(leaveWorkflow)
+
+await wf.inState('submitted').as({ id: 1, role: 'manager' })
+  .transition('approve')
+  .then(r => r.toSucceed().toBeInState('approved'))
+
+await wf.inState('submitted').as({ id: 2, role: 'employee' })
+  .transition('approve')
+  .then(r => r.toFail().toFailWithReason('guard_failed'))
+```
+
+### IntegrationTestKit — real-database testing
+
+```ts
+import { seed, testDb, TestClient } from '../core/testing/index.js'
+import { app } from '../index.js'
+
+const client = new TestClient(app)
+
+beforeEach(() => testDb.truncateAll())
+
+test('POST /companies requires auth', async () => {
+  const { res } = await client.post('/companies').send({ name: 'Acme' }).json()
+  expect(res.status).toBe(401)
+})
+
+test('admin can create a company', async () => {
+  const admin = await seed.createUser({ role: 'admin' })
+  const { res, body } = await client.post('/companies')
+    .withAuth(admin).send({ name: 'Acme' }).json()
+  expect(res.status).toBe(201)
+  expect(body.data.name).toBe('Acme')
+})
+```
+
+`seed` helpers: `createUser({ role })`, `createCompany(opts)`, `createSubmission(opts)`.
+`testDb.truncate('companies', 'audit_events')` for targeted cleanup.
+
+### Schema snapshot testing
+
+```ts
+import { schemaSnapshot, graphSnapshot, diffSchemaSnapshots } from '../core/testing/index.js'
+
+// Detect unintended schema regressions
+expect(schemaSnapshot(userForm)).toMatchSnapshot()
+expect(graphSnapshot(reviewWorkflow)).toMatchSnapshot()
+
+// Compare two schema versions programmatically
+const diff = diffSchemaSnapshots(oldSnapshot, newSnapshot)
+// → { added: ['phone'], removed: [], changed: ['email'] }
+```

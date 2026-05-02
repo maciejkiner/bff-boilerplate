@@ -8,7 +8,7 @@ import { WorkflowRegistry } from './core/workflow/index.js'
 import { mountAuditRoutes } from './core/audit/index.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { authMiddleware } from './middleware/auth.js'
-import { CompaniesResource } from './resources/companies/resource.js'
+import { UsersResource } from './resources/users/resource.js'
 
 const app = new Hono()
 
@@ -26,8 +26,7 @@ app.use('*', authMiddleware)
 // Register resources — each auto-wires GET/POST/PUT/DELETE routes
 const registry = new ResourceRegistry()
 registry
-  .register('companies', CompaniesResource)
-  // .register('users', UsersResource)
+  .register('users', UsersResource)
   .mount(app)
 
 // Workflow graph endpoints — register workflows here

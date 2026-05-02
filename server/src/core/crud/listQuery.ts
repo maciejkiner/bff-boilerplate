@@ -1,9 +1,10 @@
-export type FilterOperator = 'eq' | 'like' | 'gt' | 'gte' | 'lt' | 'lte' | 'isNull'
+export type FilterOperator = 'eq' | 'neq' | 'like' | 'gt' | 'gte' | 'lt' | 'lte' | 'isNull' | 'in'
 
 export interface FilterClause {
-  field: string
-  op:    FilterOperator
-  value: string
+  field:  string
+  op:     FilterOperator
+  value:  string
+  values?: string[]
 }
 
 export interface SortClause {
@@ -25,7 +26,7 @@ export interface PagedMeta {
   hasNext:  boolean
 }
 
-const VALID_OPS = new Set<string>(['eq', 'like', 'gt', 'gte', 'lt', 'lte', 'isNull'])
+const VALID_OPS = new Set<string>(['eq', 'neq', 'like', 'gt', 'gte', 'lt', 'lte', 'isNull', 'in'])
 
 export function parseListQuery(rawUrl: string): ListQuery {
   const params = new URLSearchParams(rawUrl.includes('?') ? rawUrl.split('?')[1] : '')
@@ -41,7 +42,10 @@ export function parseListQuery(rawUrl: string): ListQuery {
     // filter[field][op]=value
     const withOp = key.match(/^filter\[([A-Za-z_]\w*)\]\[([A-Za-z]+)\]$/)
     if (withOp && VALID_OPS.has(withOp[2]!)) {
-      filters.push({ field: withOp[1]!, op: withOp[2]! as FilterOperator, value })
+      const op = withOp[2]! as FilterOperator
+      const clause: FilterClause = { field: withOp[1]!, op, value }
+      if (op === 'in') clause.values = value.split(',').filter(Boolean)
+      filters.push(clause)
     }
   }
 

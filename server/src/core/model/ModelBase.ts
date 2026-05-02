@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, isNull, like, lt, lte, sql, SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, isNull, like, lt, lte, ne, sql, SQL } from 'drizzle-orm'
 import { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import { db } from '../../db/index.js'
 import type { FilterClause, ListQuery, SortClause } from '../crud/listQuery.js'
@@ -59,13 +59,15 @@ export abstract class ModelBase<
       const col = (this.table as any)[f.field]
       if (!col) continue
       switch (f.op) {
-        case 'eq':     conditions.push(eq(col, f.value));              break
-        case 'like':   conditions.push(like(col, `%${f.value}%`));     break
-        case 'gt':     conditions.push(gt(col, f.value));              break
-        case 'gte':    conditions.push(gte(col, f.value));             break
-        case 'lt':     conditions.push(lt(col, f.value));              break
-        case 'lte':    conditions.push(lte(col, f.value));             break
-        case 'isNull': conditions.push(isNull(col));                   break
+        case 'eq':     conditions.push(eq(col, f.value));                      break
+        case 'neq':    conditions.push(ne(col, f.value));                      break
+        case 'like':   conditions.push(like(col, `%${f.value}%`));            break
+        case 'gt':     conditions.push(gt(col, f.value));                      break
+        case 'gte':    conditions.push(gte(col, f.value));                     break
+        case 'lt':     conditions.push(lt(col, f.value));                      break
+        case 'lte':    conditions.push(lte(col, f.value));                     break
+        case 'isNull': conditions.push(isNull(col));                           break
+        case 'in':     if (f.values?.length) conditions.push(inArray(col, f.values)); break
       }
     }
     return conditions.length ? and(...conditions) : undefined

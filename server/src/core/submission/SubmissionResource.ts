@@ -31,14 +31,19 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     app.post(`${basePath}/:id/restore`,           ctx => this.restore(ctx))
     app.get(`${basePath}/:id/history`,            ctx => this.history(ctx))
     app.get(`${basePath}/:id/history/:version`,   ctx => this.historyVersion(ctx))
-    app.get(`${basePath}/:id/transitions`,         ctx => this.listTransitions(ctx))
-    app.post(`${basePath}/:id/transitions/:action`, ctx => this.executeTransition(ctx))
+    app.get(`${basePath}/:id/transitions`,                             ctx => this.listTransitions(ctx))
+    app.post(`${basePath}/:id/transitions/:action`,                    ctx => this.executeTransition(ctx))
+    app.get(`${basePath}/:id/branches/:branch/transitions`,            ctx => this.listBranchTransitions(ctx))
+    app.post(`${basePath}/:id/branches/:branch/transitions/:action`,   ctx => this.executeBranchTransition(ctx))
+    app.post(`${basePath}/:id/assign`,                                 ctx => this.assign(ctx))
   }
 
   // ── Schema ───────────────────────────────────────────────────────────────────
 
-  async schema(_ctx: Context): Promise<Response> {
-    return _ctx.json(ok(this.form.toSchema()))
+  async schema(ctx: Context): Promise<Response> {
+    const user = ctx.get('user') as { id: number; role: string } | undefined
+    const fCtx = user ? { user } : {}
+    return ctx.json(ok(this.form.toSchema(fCtx)))
   }
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -78,7 +83,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     const id  = Number(ctx.req.param('id'))
     const row = await this.model.get(id)
     if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
-    await this.model.delete(id)
+    await this.model.softDelete(id, this.getUserId(ctx))
     return ctx.json(ok(null))
   }
 
@@ -145,11 +150,19 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     const id  = Number(ctx.req.param('id'))
     const row = await this.model.get(id)
     if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
-    const updated = await this.model.transition(id, 'archived')
+    const updated = await this.model.transition(id, 'archived', this.getUserId(ctx))
     return ctx.json(ok(updated))
   }
 
   async restore(ctx: Context): Promise<Response> {
+    const id  = Number(ctx.req.param('id'))
+    // Check including soft-deleted rows
+    const row = await this.model.getDeleted(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    if (row.deleted_at) {
+      const restored = await this.model.undelete(id)
+      return ctx.json(ok(restored))
+    }
     return this.transition(ctx, 'archived', 'draft')
   }
 
@@ -195,8 +208,61 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     const wfCtx   = this.buildWorkflowContext(ctx, row)
     const result  = await this.workflow.transition(action, current, wfCtx)
     if (!result.ok) return ctx.json(fail({ _root: [result.message] }), 422)
-    const updated = await this.model.setWorkflowState(id, result.newState)
-    await this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState } })
+    // Initialize branch states if the new state has parallel branches
+    const initBranches = this.workflow.initBranchStates(result.newState)
+    const updated = await this.model.setWorkflowState(id, result.newState, result.assignTo, initBranches)
+    await this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState, ...(result.assignTo !== undefined ? { assigned_to: result.assignTo } : {}) } })
+    return ctx.json(ok(updated))
+  }
+
+  async listBranchTransitions(ctx: Context): Promise<Response> {
+    if (!this.workflow) return ctx.json(fail({ _root: ['No workflow defined for this resource'] }), 400)
+    const id     = Number(ctx.req.param('id'))
+    const branch = ctx.req.param('branch')!
+    const row    = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const branchStates = (row.workflow_branches ?? {}) as Record<string, string>
+    const wfCtx        = this.buildWorkflowContext(ctx, row)
+    const available    = await this.workflow.availableBranchTransitions(branch, branchStates, wfCtx)
+    return ctx.json(ok(available.map(t => ({ name: t.name, label: t.label ?? t.name, to: t.to }))))
+  }
+
+  async executeBranchTransition(ctx: Context): Promise<Response> {
+    if (!this.workflow) return ctx.json(fail({ _root: ['No workflow defined for this resource'] }), 400)
+    const id     = Number(ctx.req.param('id'))
+    const branch = ctx.req.param('branch')!
+    const action = ctx.req.param('action')!
+    const row    = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const branchStates = (row.workflow_branches ?? {}) as Record<string, string>
+    const wfCtx        = this.buildWorkflowContext(ctx, row)
+    const result       = await this.workflow.transitionBranch(branch, action, branchStates, wfCtx)
+    if (!result.ok) return ctx.json(fail({ _root: [result.message] }), 422)
+
+    if (result.merged) {
+      // Merge: fire the main workflow's merge transition
+      const current     = row.workflow_state ?? this.workflow.initial
+      const mergeResult = await this.workflow.transition(result.mergeTransition, current, wfCtx)
+      if (!mergeResult.ok) return ctx.json(fail({ _root: [mergeResult.message] }), 422)
+      const initBranches = this.workflow.initBranchStates(mergeResult.newState)
+      const updated = await this.model.setWorkflowState(id, mergeResult.newState, mergeResult.assignTo, initBranches)
+      await this.auditLogger?.log({ entity_id: id, action: 'branch_merge', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, mergeTransition: result.mergeTransition, newState: mergeResult.newState } })
+      return ctx.json(ok(updated))
+    }
+
+    const updated = await this.model.setBranchStates(id, result.branchStates)
+    await this.auditLogger?.log({ entity_id: id, action: 'branch_transition', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, branchStates: result.branchStates } })
+    return ctx.json(ok(updated))
+  }
+
+  async assign(ctx: Context): Promise<Response> {
+    const id   = Number(ctx.req.param('id'))
+    const body = await ctx.req.json()
+    const userId: number | null = typeof body?.user_id === 'number' ? body.user_id : null
+    const row = await this.model.get(id)
+    if (!row || row.form_name !== this.formName) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    const updated = await this.model.assignTo(id, userId)
+    await this.auditLogger?.log({ entity_id: id, action: 'assign', user_id: this.getUserId(ctx), payload: { assigned_to: userId } })
     return ctx.json(ok(updated))
   }
 
@@ -236,7 +302,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
       const errors = await validate(row)
       if (errors) return ctx.json(fail(errors), 422)
     }
-    const updated = await this.model.transition(id, to)
+    const updated = await this.model.transition(id, to, this.getUserId(ctx))
     return ctx.json(ok(updated))
   }
 }

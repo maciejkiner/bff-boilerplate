@@ -1,25 +1,39 @@
 import { sql } from 'drizzle-orm'
 import { db } from '../../db/index.js'
-import { isVisible } from './FormDefinition.js'
+import { isVisible, isEditable } from './FormDefinition.js'
 import { defaultMessages, interpolate } from './messages.js'
-import type { FormDefinition, ValidationContext } from './types.js'
+import { validators as validatorRegistry } from '../validators/index.js'
+import type { FormContext, FormDefinition, ValidationContext } from './types.js'
 
 export type ValidationResult<T> =
   | { ok: true;  data: T }
   | { ok: false; errors: Record<string, string[]> }
 
+export interface ValidateFormOptions<TInput> {
+  excludeId?: number
+  user?:      FormContext<TInput>['user']
+}
+
 export async function validateForm<TInput extends Record<string, unknown>>(
   form: FormDefinition<TInput>,
   payload: unknown,
   validationContext: ValidationContext = 'submit',
-  excludeId?: number,
+  options?: ValidateFormOptions<TInput> | number,
 ): Promise<ValidationResult<TInput>> {
+  const opts: ValidateFormOptions<TInput> = typeof options === 'number' ? { excludeId: options } : (options ?? {})
+  const excludeId = opts.excludeId
   const rawValues = (typeof payload === 'object' && payload !== null ? payload : {}) as Partial<TInput>
-  const ctx = { values: rawValues, validationContext }
+  const ctx: FormContext<TInput> = {
+    values: rawValues,
+    validationContext,
+    ...(opts.user ? { user: opts.user } : {}),
+  }
 
   const stripped: Record<string, unknown> = {}
   for (const field of form.fields) {
+    if (field.type === 'computed') continue
     if (!isVisible(field, ctx)) continue
+    if (!isEditable(field, ctx)) continue
     const key = field.name as string
     if (key in rawValues) {
       stripped[key] = rawValues[key as keyof typeof rawValues]
@@ -54,6 +68,24 @@ export async function validateForm<TInput extends Record<string, unknown>>(
       return { ok: false, errors: { [key]: [msg] } }
     }
   }
+
+  // Named validators from registry (e.g. 'nip', 'pesel')
+  const namedErrors: Record<string, string[]> = {}
+  for (const field of form.fields) {
+    if (field.type === 'computed' || field.type === 'group') continue
+    if (!isVisible(field, ctx)) continue
+    const named = (field as { validators?: string[] }).validators
+    if (!named?.length) continue
+    const value = (data as Record<string, unknown>)[field.name as string]
+    if (value === undefined || value === null || value === '') continue
+    for (const name of named) {
+      const fn = validatorRegistry.get(name)
+      if (!fn) continue
+      const msg = await fn(value)
+      if (msg) (namedErrors[field.name as string] ??= []).push(msg)
+    }
+  }
+  if (Object.keys(namedErrors).length) return { ok: false, errors: namedErrors }
 
   if (form.asyncValidators.length > 0) {
     const results = await Promise.all(
