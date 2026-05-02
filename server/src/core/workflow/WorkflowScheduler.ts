@@ -4,7 +4,7 @@ import { form_submissions } from '../../db/schema.js'
 import type { WorkflowInstance } from './types.js'
 
 export class WorkflowScheduler {
-  private _timer?: ReturnType<typeof setInterval>
+  private _timer?: ReturnType<typeof setTimeout>
 
   constructor(
     private readonly workflow: WorkflowInstance,
@@ -50,11 +50,16 @@ export class WorkflowScheduler {
   }
 
   start(intervalMs = 60_000): this {
-    this._timer = setInterval(() => { void this.checkTimeouts() }, intervalMs)
+    const loop = () => {
+      this.checkTimeouts()
+        .catch(e => console.error('[WorkflowScheduler] checkTimeouts failed:', e))
+        .finally(() => { this._timer = setTimeout(loop, intervalMs) })
+    }
+    loop()
     return this
   }
 
   stop(): void {
-    if (this._timer) clearInterval(this._timer)
+    if (this._timer) clearTimeout(this._timer)
   }
 }

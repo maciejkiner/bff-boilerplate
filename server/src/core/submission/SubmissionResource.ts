@@ -211,7 +211,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     // Initialize branch states if the new state has parallel branches
     const initBranches = this.workflow.initBranchStates(result.newState)
     const updated = await this.model.setWorkflowState(id, result.newState, result.assignTo, initBranches)
-    await this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState, ...(result.assignTo !== undefined ? { assigned_to: result.assignTo } : {}) } })
+    void this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState, ...(result.assignTo !== undefined ? { assigned_to: result.assignTo } : {}) } }).catch(e => console.error('[audit]', e))
     return ctx.json(ok(updated))
   }
 
@@ -246,12 +246,12 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
       if (!mergeResult.ok) return ctx.json(fail({ _root: [mergeResult.message] }), 422)
       const initBranches = this.workflow.initBranchStates(mergeResult.newState)
       const updated = await this.model.setWorkflowState(id, mergeResult.newState, mergeResult.assignTo, initBranches)
-      await this.auditLogger?.log({ entity_id: id, action: 'branch_merge', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, mergeTransition: result.mergeTransition, newState: mergeResult.newState } })
+      void this.auditLogger?.log({ entity_id: id, action: 'branch_merge', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, mergeTransition: result.mergeTransition, newState: mergeResult.newState } }).catch(e => console.error('[audit]', e))
       return ctx.json(ok(updated))
     }
 
     const updated = await this.model.setBranchStates(id, result.branchStates)
-    await this.auditLogger?.log({ entity_id: id, action: 'branch_transition', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, branchStates: result.branchStates } })
+    void this.auditLogger?.log({ entity_id: id, action: 'branch_transition', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, branchStates: result.branchStates } }).catch(e => console.error('[audit]', e))
     return ctx.json(ok(updated))
   }
 

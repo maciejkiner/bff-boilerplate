@@ -8,6 +8,7 @@ import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery, type ListQuery } from './listQuery.js'
 import type { AuditLogger } from '../audit/AuditLogger.js'
+import { db } from '../../db/index.js'
 
 const BULK_MAX = 100
 
@@ -68,7 +69,7 @@ export abstract class BaseCrud<
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     const { data: created } = result as { state: 'created'; data: TSelect }
     await this.afterCreate(created, ctx)
-    await this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } })
+    void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => console.error('[audit]', e))
     return ctx.json(ok(this.shapeOutput(created, fields)), 201)
   }
 
@@ -83,7 +84,7 @@ export abstract class BaseCrud<
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     const { data: updated } = result as { state: 'updated'; data: TSelect }
     await this.afterUpdate(updated, ctx)
-    await this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before, after: updated } })
+    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before, after: updated } }).catch(e => console.error('[audit]', e))
     return ctx.json(ok(this.shapeOutput(updated, fields)))
   }
 
@@ -112,18 +113,19 @@ export abstract class BaseCrud<
     const patch  = Object.fromEntries(sentFields.map(f => [f.name, (result.data as Record<string, unknown>)[f.name]]))
     const saved  = await this.model.save(patch as TInput, id)
     await this.afterUpdate(saved, ctx)
-    await this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before: existing, patch: sent, after: saved } })
+    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before: existing, patch: sent, after: saved } }).catch(e => console.error('[audit]', e))
     return ctx.json(ok(this.shapeOutput(saved, fields)))
   }
 
   async delete(ctx: Context): Promise<Response> {
-    const id     = Number(ctx.req.param('id'))
-    const user   = this.getUser(ctx)
-    const before = this.auditLogger ? await this.model.get(id) : undefined
+    const id   = Number(ctx.req.param('id'))
+    const user = this.getUser(ctx)
+    const row  = await this.model.get(id)
+    if (!row) return ctx.json(fail({ _root: ['Not found'] }), 404)
     await this.beforeDelete(id, ctx)
     await this.model.delete(id)
-    await this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before } })
-    return ctx.json(ok(null))
+    void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => console.error('[audit]', e))
+    return new Response(null, { status: 204 })
   }
 
   async schema(ctx: Context): Promise<Response> {
@@ -166,34 +168,46 @@ export abstract class BaseCrud<
       parsed.push(entry)
     }
 
-    // Execute
-    for (const entry of parsed) {
-      if (entry.op === 'create') {
-        const body = await this.beforeCreate(entry.data, ctx)
-        const result = await handleForm(this.form, this.model, body, undefined, vCtx, user)
-        if (result.state === 'error') return ctx.json(fail(result.errors), 422)
-        const { data: created } = result as { state: 'created'; data: TSelect }
-        await this.afterCreate(created, ctx)
-        await this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } })
-        results.push({ op: 'create', data: created })
-      } else if (entry.op === 'update') {
-        const id     = entry.id!
-        const before = this.auditLogger ? await this.model.get(id) : undefined
-        const body   = await this.beforeUpdate(id, entry.data, ctx)
-        const result = await handleForm(this.form, this.model, body, id, vCtx, user)
-        if (result.state === 'error') return ctx.json(fail(result.errors), 422)
-        const { data: updated } = result as { state: 'updated'; data: TSelect }
-        await this.afterUpdate(updated, ctx)
-        await this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before, after: updated } })
-        results.push({ op: 'update', data: updated })
-      } else {
-        const id     = entry.id!
-        const before = this.auditLogger ? await this.model.get(id) : undefined
-        await this.beforeDelete(id, ctx)
-        await this.model.delete(id)
-        await this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before } })
-        results.push({ op: 'delete', id })
+    // Execute all operations in a single transaction — truly all-or-nothing
+    try {
+      await db.transaction(async () => {
+        for (const entry of parsed) {
+          if (entry.op === 'create') {
+            const body = await this.beforeCreate(entry.data, ctx)
+            const result = await handleForm(this.form, this.model, body, undefined, vCtx, user)
+            if (result.state === 'error') throw Object.assign(new Error('validation'), { validationErrors: result.errors })
+            const { data: created } = result as { state: 'created'; data: TSelect }
+            await this.afterCreate(created, ctx)
+            void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => console.error('[audit]', e))
+            results.push({ op: 'create', data: created })
+          } else if (entry.op === 'update') {
+            const id   = entry.id!
+            const body = await this.beforeUpdate(id, entry.data, ctx)
+            const result = await handleForm(this.form, this.model, body, id, vCtx, user)
+            if (result.state === 'error') throw Object.assign(new Error('validation'), { validationErrors: result.errors })
+            const { data: updated } = result as { state: 'updated'; data: TSelect }
+            await this.afterUpdate(updated, ctx)
+            void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { after: updated } }).catch(e => console.error('[audit]', e))
+            results.push({ op: 'update', data: updated })
+          } else {
+            const id  = entry.id!
+            const row = await this.model.get(id)
+            if (!row) throw Object.assign(new Error('not_found'), { notFoundId: id })
+            await this.beforeDelete(id, ctx)
+            await this.model.delete(id)
+            void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => console.error('[audit]', e))
+            results.push({ op: 'delete', id })
+          }
+        }
+      })
+    } catch (err) {
+      if (err instanceof Error && 'validationErrors' in err) {
+        return ctx.json(fail((err as Error & { validationErrors: Record<string, string[]> }).validationErrors), 422)
       }
+      if (err instanceof Error && 'notFoundId' in err) {
+        return ctx.json(fail({ _root: [`Record ${(err as Error & { notFoundId: number }).notFoundId} not found`] }), 404)
+      }
+      throw err
     }
 
     return ctx.json(ok(results))

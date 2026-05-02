@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, serial, varchar, timestamp, boolean } from 'drizzle-orm/pg-core'
+import { index, integer, jsonb, pgTable, serial, varchar, timestamp, boolean } from 'drizzle-orm/pg-core'
 
 // <!-- generate:schema --> — marker used by `npm run generate resource`; do not remove
 export const users = pgTable('users', {
@@ -18,7 +18,10 @@ export const audit_events = pgTable('audit_events', {
   user_id:     integer('user_id'),
   payload:     jsonb('payload'),
   timestamp:   timestamp('timestamp').defaultNow().notNull(),
-})
+}, t => [
+  index('audit_entity_idx').on(t.entity_type, t.entity_id),
+  index('audit_timestamp_idx').on(t.timestamp),
+])
 
 export const form_submission_versions = pgTable('form_submission_versions', {
   id:            serial('id').primaryKey(),
@@ -27,7 +30,9 @@ export const form_submission_versions = pgTable('form_submission_versions', {
   data:          jsonb('data').notNull(),
   changed_by:    integer('changed_by'),
   changed_at:    timestamp('changed_at').defaultNow().notNull(),
-})
+}, t => [
+  index('fsv_submission_idx').on(t.submission_id),
+])
 
 export const form_submissions = pgTable('form_submissions', {
   id:         serial('id').primaryKey(),
@@ -44,4 +49,8 @@ export const form_submissions = pgTable('form_submissions', {
   updated_at:   timestamp('updated_at').defaultNow().notNull(),
   deleted_at:   timestamp('deleted_at'),
   version:      integer('version').notNull().default(1),
-})
+}, t => [
+  index('fs_form_deleted_idx').on(t.form_name, t.deleted_at),
+  index('fs_ttl_idx').on(t.workflow_state_entered_at),
+  index('fs_assigned_idx').on(t.assigned_to),
+])
