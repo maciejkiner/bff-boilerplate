@@ -1,6 +1,6 @@
 import { integer, jsonb, pgTable, serial, varchar, timestamp, boolean } from 'drizzle-orm/pg-core'
 
-// Example schema — extend with your own tables
+// <!-- generate:schema --> — marker used by `npm run generate resource`; do not remove
 export const users = pgTable('users', {
   id:         serial('id').primaryKey(),
   email:      varchar('email', { length: 200 }).notNull().unique(),

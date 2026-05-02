@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import type {
   ArrayFieldDef, AsyncValidator, ComputedFieldDef, ConditionalRule, CrossFieldRule,
-  FieldDef, FieldGroupDef, FieldMeta, FormContext, FormDefinition, FormSchema,
-  MessageKey, MessageResolver, RelationFieldDef, RowDef, StepDef, UniqueCheck,
+  FieldDef, FieldGroupDef, FieldMeta, FormContext, FormDefinition,
+  MessageKey, MessageResolver, RelationFieldDef, StepDef, UniqueCheck,
 } from './types.js'
 import { makeResolver } from './messages.js'
 

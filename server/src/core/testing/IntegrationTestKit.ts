@@ -2,7 +2,7 @@ import { sign } from 'hono/jwt'
 import { sql } from 'drizzle-orm'
 import type { Hono } from 'hono'
 import { db } from '../../db/index.js'
-import { users, form_submissions, form_submission_versions, audit_events } from '../../db/schema.js'
+import { users, form_submissions } from '../../db/schema.js'
 
 // ── Test users ────────────────────────────────────────────────────────────────
 

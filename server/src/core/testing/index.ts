@@ -5,5 +5,5 @@ export { WorkflowTestKit, WorkflowRunner, WorkflowAssertions } from './WorkflowT
 
 export { schemaSnapshot, parseSchemaSnapshot, graphSnapshot, diffSchemaSnapshots } from './snapshot.js'
 
-export { seed, testDb, TestDb, TestClient } from './IntegrationTestKit.js'
+export { seed, testDb, TestDb, TestClient, createTestToken } from './IntegrationTestKit.js'
 export type { TestUser } from './IntegrationTestKit.js'

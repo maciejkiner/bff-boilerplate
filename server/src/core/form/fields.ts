@@ -5,7 +5,7 @@ import type {
   ComputedFieldDef, ConditionalOp, ConditionalRule, FormContext,
 } from './types.js'
 
-type Def<T, D> = Omit<D, 'name' | 'type'>
+type Def<_T, D> = Omit<D, 'name' | 'type'>
 
 export const text     = <T>(name: keyof T & string, opts: Def<T, TextFieldDef<T>>):     TextFieldDef<T>     => ({ name, type: 'text',     ...opts })
 export const email    = <T>(name: keyof T & string, opts: Def<T, EmailFieldDef<T>>):    EmailFieldDef<T>    => ({ name, type: 'email',    ...opts })

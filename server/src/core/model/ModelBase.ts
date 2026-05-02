@@ -57,7 +57,10 @@ export abstract class ModelBase<
     const conditions: SQL[] = []
     for (const f of filters) {
       const col = (this.table as any)[f.field]
-      if (!col) continue
+      if (!col) {
+        console.warn(`[ModelBase] Unknown filter field '${f.field}' — filter ignored`)
+        continue
+      }
       switch (f.op) {
         case 'eq':     conditions.push(eq(col, f.value));                      break
         case 'neq':    conditions.push(ne(col, f.value));                      break
@@ -76,7 +79,10 @@ export abstract class ModelBase<
   private buildOrderBy(sort: SortClause[]): SQL[] {
     return sort.flatMap(s => {
       const col = (this.table as any)[s.field]
-      if (!col) return []
+      if (!col) {
+        console.warn(`[ModelBase] Unknown sort field '${s.field}' — sort ignored`)
+        return []
+      }
       return [s.dir === 'desc' ? desc(col) : asc(col)]
     })
   }

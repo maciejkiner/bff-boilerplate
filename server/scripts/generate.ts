@@ -3,34 +3,33 @@
  * Code generation CLI.
  *
  * Usage:
- *   npx tsx scripts/generate.ts resource <Name>   — scaffold a CRUD resource
- *   npx tsx scripts/generate.ts init              — create .env from .env.example
+ *   npm run generate resource <Name>          scaffold a CRUD resource
+ *   npm run generate resource <Name> --dry-run  preview without writing
+ *   npm run generate init                     create .env from .env.example
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const __dir    = dirname(fileURLToPath(import.meta.url))
-const ROOT     = resolve(__dir, '..')
-const SRC      = resolve(ROOT, 'src')
+const __dir     = dirname(fileURLToPath(import.meta.url))
+const ROOT      = resolve(__dir, '..')
+const SRC       = resolve(ROOT, 'src')
 const REPO_ROOT = resolve(ROOT, '..')
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function pascal(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
+function pascal(s: string) { return s.charAt(0).toUpperCase() + s.slice(1) }
+function camel(s: string)  { return s.charAt(0).toLowerCase() + s.slice(1) }
+function snake(s: string)  { return s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '') }
 
-function camel(s: string) {
-  return s.charAt(0).toLowerCase() + s.slice(1)
-}
-
-function snake(s: string) {
-  return s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
-}
+const isDryRun = process.argv.includes('--dry-run')
 
 function write(path: string, content: string) {
+  if (isDryRun) {
+    console.log(`  [dry-run] would write: ${path}`)
+    return
+  }
   mkdirSync(dirname(path), { recursive: true })
   if (existsSync(path)) {
     console.error(`  skip  ${path}  (already exists)`)
@@ -38,6 +37,29 @@ function write(path: string, content: string) {
   }
   writeFileSync(path, content, 'utf8')
   console.log(`  write ${path}`)
+}
+
+function inject(filePath: string, marker: string, snippet: string) {
+  if (!existsSync(filePath)) {
+    console.error(`  warn  ${filePath} not found — skipping injection`)
+    return
+  }
+  const src = readFileSync(filePath, 'utf8')
+  if (src.includes(snippet.trim())) {
+    console.log(`  skip  injection into ${filePath} (already present)`)
+    return
+  }
+  if (!src.includes(marker)) {
+    console.error(`  warn  marker '${marker}' not found in ${filePath} — skipping injection`)
+    return
+  }
+  const updated = src.replace(marker, `${marker}\n${snippet}`)
+  if (isDryRun) {
+    console.log(`  [dry-run] would inject into ${filePath}:\n${snippet}`)
+    return
+  }
+  writeFileSync(filePath, updated, 'utf8')
+  console.log(`  inject ${filePath}`)
 }
 
 // ── resource generator ────────────────────────────────────────────────────────
@@ -48,17 +70,7 @@ function generateResource(name: string) {
   const table  = snake(name) + 's'
   const dir    = resolve(SRC, 'resources', lower)
 
-  // 1. schema snippet (printed, not auto-injected)
-  const schemaSnippet = `
-// Add to src/db/schema.ts:
-export const ${table} = pgTable('${table}', {
-  id:         serial('id').primaryKey(),
-  name:       varchar('name', { length: 200 }).notNull(),
-  created_at: timestamp('created_at').defaultNow().notNull(),
-})
-`.trim()
-
-  // 2. model.ts
+  // 1. model.ts
   write(resolve(dir, 'model.ts'), `import { ${table} } from '../../db/schema.js'
 import { ModelBase } from '../../core/model/ModelBase.js'
 import type { InferInsertModel, InferSelectModel } from 'drizzle-orm'
@@ -71,7 +83,7 @@ export class ${Name}Model extends ModelBase<typeof ${table}, ${Name}Insert, ${Na
 }
 `)
 
-  // 3. form.ts
+  // 2. form.ts
   write(resolve(dir, 'form.ts'), `import { defineForm, text } from '../../core/form/index.js'
 import type { ${Name}Insert } from './model.js'
 
@@ -86,7 +98,7 @@ export const ${lower}Form = defineForm<${Name}Insert>([
 ])
 `)
 
-  // 4. resource.ts
+  // 3. resource.ts
   write(resolve(dir, 'resource.ts'), `import { BaseCrud } from '../../core/crud/BaseCrud.js'
 import { ${Name}Model, type ${Name}, type ${Name}Insert } from './model.js'
 import { ${lower}Form } from './form.js'
@@ -98,22 +110,25 @@ export class ${Name}Resource extends BaseCrud<typeof ${table}, ${Name}Insert, ${
 }
 `)
 
-  // 5. print registration instructions
+  // 4. inject schema table definition into db/schema.ts
+  const schemaSnippet = `export const ${table} = pgTable('${table}', {
+  id:         serial('id').primaryKey(),
+  name:       varchar('name', { length: 200 }).notNull(),
+  created_at: timestamp('created_at').defaultNow().notNull(),
+})
+`
+  inject(resolve(SRC, 'db', 'schema.ts'), '// <!-- generate:schema -->', schemaSnippet)
+
+  // 5. inject resource registration into app.ts
+  const importLine  = `import { ${Name}Resource } from './resources/${lower}/resource.js'`
+  const registerLine = `  .register('${table}', ${Name}Resource)`
+
+  inject(resolve(SRC, 'app.ts'), '// <!-- generate:resources -->', importLine)
+  inject(resolve(SRC, 'app.ts'), `.register('users', UsersResource)`, registerLine)
+
   console.log(`
-Done! Next steps:
-
-1. Add the schema snippet to src/db/schema.ts:
-
-${schemaSnippet}
-
-2. Register the resource in src/index.ts:
-
-   import { ${Name}Resource } from './resources/${lower}/resource.js'
-   // inside registry chain:
-   .register('${table}', ${Name}Resource)
-
-3. Push schema to DB:
-   npm run db:push
+Done! Next step: push schema to DB:
+  npm run db:push
 `)
 }
 
@@ -133,6 +148,11 @@ function init() {
     return
   }
 
+  if (isDryRun) {
+    console.log('[dry-run] would copy .env.example → .env')
+    return
+  }
+
   copyFileSync(example, target)
   console.log('Created .env from .env.example')
   console.log('Update DATABASE_URL and JWT_SECRET before starting the server.')
@@ -140,12 +160,13 @@ function init() {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-const [,, command, ...args] = process.argv
+const args    = process.argv.slice(2).filter(a => a !== '--dry-run')
+const [command, ...rest] = args
 
 switch (command) {
   case 'resource': {
-    const name = args[0]
-    if (!name) { console.error('Usage: generate resource <Name>'); process.exit(1) }
+    const name = rest[0]
+    if (!name) { console.error('Usage: npm run generate resource <Name>'); process.exit(1) }
     generateResource(name)
     break
   }
@@ -155,7 +176,8 @@ switch (command) {
   }
   default: {
     console.log(`Usage:
-  npx tsx scripts/generate.ts resource <Name>   scaffold a CRUD resource
-  npx tsx scripts/generate.ts init              create .env from .env.example`)
+  npm run generate resource <Name>            scaffold a CRUD resource (auto-injects schema + route)
+  npm run generate resource <Name> --dry-run  preview without writing files
+  npm run generate init                       create .env from .env.example`)
   }
 }

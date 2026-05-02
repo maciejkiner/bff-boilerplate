@@ -5,7 +5,7 @@ import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery } from '../crud/listQuery.js'
 import { SubmissionModel } from './SubmissionModel.js'
-import { TRANSITIONS, type FormSubmission, type SubmissionStatus } from './types.js'
+import type { FormSubmission, SubmissionStatus } from './types.js'
 import type { WorkflowInstance } from '../workflow/types.js'
 import type { AuditLogger } from '../audit/AuditLogger.js'
 

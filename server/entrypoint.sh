@@ -1,10 +1,13 @@
 #!/bin/sh
 set -e
 
-echo "Waiting for database to be ready..."
-echo "Syncing database schema..."
+echo "[entrypoint] Syncing database schema..."
 cd /app/server
-npx drizzle-kit push --force
+if ! npx drizzle-kit push --force; then
+  echo "[entrypoint] ERROR: schema sync failed. Server will not start."
+  exit 1
+fi
+echo "[entrypoint] Schema sync complete."
 
-echo "Starting server..."
+echo "[entrypoint] Starting server..."
 exec node dist/index.js
