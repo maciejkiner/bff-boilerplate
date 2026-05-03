@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { useWizardEngine } from './useWizardEngine.js'
+import { useState, useSyncExternalStore } from 'react'
 import { FormController } from './FormController.js'
 import type { WizardEngine } from '../core/WizardEngine.js'
 
@@ -10,10 +9,27 @@ interface Props<T extends object> {
 
 export function WizardController<T extends object>({ engine, submitLabel = 'Submit' }: Props<T>) {
   type TT = T & { id?: number }
-  const {
-    state, errors, currentStepIndex, currentStep, currentStepFields,
-    steps, isFirst, isLast, isSaving, isSubmitting,
-  } = useWizardEngine<T>(engine.config as any)
+
+  // Subscribe directly to the passed engine — no second engine created
+  const snap = useSyncExternalStore(
+    cb => engine.subscribe(cb),
+    () => ({
+      state:            engine.state,
+      errors:           engine.errors,
+      currentStepIndex: engine.currentStepIndex,
+      steps:            engine.steps,
+      fields:           engine.fields,
+    }),
+  )
+
+  const step             = snap.steps[snap.currentStepIndex]
+  const currentStepFields = step
+    ? snap.fields.filter(f => step.fields.includes(f.name))
+    : snap.fields
+  const isFirst      = snap.currentStepIndex === 0
+  const isLast       = snap.currentStepIndex === snap.steps.length - 1
+  const isSaving     = snap.state === 'saving'
+  const isSubmitting = snap.state === 'submitting'
 
   const [values, setValues] = useState<Record<string, unknown>>(
     () => ({ ...(engine.values as Record<string, unknown>) })
@@ -32,24 +48,27 @@ export function WizardController<T extends object>({ engine, submitLabel = 'Subm
     engine.submitFinal(values as Partial<TT>)
   }
 
-  if (state === 'submitted') {
+  if (snap.state === 'submitted') {
     return <div className="wizard-success">Form submitted successfully.</div>
   }
 
-  if (currentStepFields.length === 0 && state !== 'error') {
+  // Show loading only while schema is being fetched (steps not yet loaded)
+  // An intentionally empty step (e.g. a review/summary step with fields:[])
+  // must NOT be treated as loading — check steps.length, not currentStepFields.length
+  if (snap.steps.length === 0 && snap.state !== 'error') {
     return <div className="form-loading">Loading form…</div>
   }
 
-  const rootError = errors['_root']?.[0]
+  const rootError = snap.errors['_root']?.[0]
   const busy = isSaving || isSubmitting
 
   return (
     <div className="wizard">
       {/* Step indicators */}
-      {steps.length > 1 && (
+      {snap.steps.length > 1 && (
         <ol className="wizard-steps">
-          {steps.map((s, i) => (
-            <li key={s.name} className={i === currentStepIndex ? 'active' : i < currentStepIndex ? 'done' : ''}>
+          {snap.steps.map((s, i) => (
+            <li key={s.name} className={i === snap.currentStepIndex ? 'active' : i < snap.currentStepIndex ? 'done' : ''}>
               {s.label}
             </li>
           ))}
@@ -59,7 +78,6 @@ export function WizardController<T extends object>({ engine, submitLabel = 'Subm
       <form onSubmit={isLast ? handleSubmit : handleNext} noValidate>
         {rootError && <div role="alert" className="form-error">{rootError}</div>}
 
-        {/* Render only current step's fields via FormController's field override */}
         <FormController
           engine={engine as any}
           fields={currentStepFields}
