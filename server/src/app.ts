@@ -30,10 +30,11 @@ app.get('/health', async ctx => {
 // All other routes require a valid JWT
 app.use('*', authMiddleware)
 
-// Register resources — add yours here; marker used by `npm run generate resource`; do not remove
+// Register resources — add yours here; markers used by `npm run generate resource`; do not remove
 // <!-- generate:resources -->
 const registry = new ResourceRegistry()
 registry
+  // <!-- generate:registry -->
   .register('users', UsersResource)
   .mount(app)
 

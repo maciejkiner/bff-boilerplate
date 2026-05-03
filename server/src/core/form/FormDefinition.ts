@@ -272,11 +272,35 @@ function buildRedacted<T>(
       }
       continue
     }
-    if (isVisible(field, ctx)) continue
-    if ((field as { sensitive?: boolean }).sensitive) {
-      out[field.name] = null
-    } else {
-      delete out[field.name]
+    if (!isVisible(field, ctx)) {
+      if ((field as { sensitive?: boolean }).sensitive) {
+        out[field.name] = null
+      } else {
+        delete out[field.name]
+      }
+      continue
+    }
+    if (field.type === 'group') {
+      const g = field as unknown as FieldGroupDef<Record<string, unknown>>
+      const nested = out[field.name]
+      if (nested && typeof nested === 'object') {
+        out[field.name] = buildRedacted(
+          g.fields as unknown as FieldDef<T>[],
+          nested,
+          ctx,
+        )
+      }
+      continue
+    }
+    if (field.type === 'array') {
+      const a = field as unknown as ArrayFieldDef<Record<string, unknown>>
+      const rows = out[field.name]
+      if (Array.isArray(rows)) {
+        out[field.name] = rows.map(row =>
+          buildRedacted(a.fields as unknown as FieldDef<T>[], row, ctx)
+        )
+      }
+      continue
     }
   }
   return out

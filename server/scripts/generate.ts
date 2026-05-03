@@ -124,7 +124,7 @@ export class ${Name}Resource extends BaseCrud<typeof ${table}, ${Name}Insert, ${
   const registerLine = `  .register('${table}', ${Name}Resource)`
 
   inject(resolve(SRC, 'app.ts'), '// <!-- generate:resources -->', importLine)
-  inject(resolve(SRC, 'app.ts'), `.register('users', UsersResource)`, registerLine)
+  inject(resolve(SRC, 'app.ts'), '  // <!-- generate:registry -->', registerLine)
 
   console.log(`
 Done! Next step: push schema to DB:

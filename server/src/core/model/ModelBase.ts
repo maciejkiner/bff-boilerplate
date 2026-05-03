@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNull, like, lt, lte, ne, sql, SQL } from 'drizzle-orm'
 import { PgTableWithColumns } from 'drizzle-orm/pg-core'
-import { db } from '../../db/index.js'
+import { db as defaultDb } from '../../db/index.js'
 import type { FilterClause, ListQuery, SortClause } from '../crud/listQuery.js'
 
 export abstract class ModelBase<
@@ -9,9 +9,14 @@ export abstract class ModelBase<
   TSelect extends { id: number },
 > {
   abstract readonly table: TTable
+  protected readonly db: typeof defaultDb
+
+  constructor(db?: typeof defaultDb) {
+    this.db = db ?? defaultDb
+  }
 
   async get(id: number): Promise<TSelect | null> {
-    const rows = await db
+    const rows = await this.db
       .select()
       .from(this.table)
       .where(eq((this.table as any)['id'], id))
@@ -22,12 +27,12 @@ export abstract class ModelBase<
   async getByField(field: keyof TSelect & string, value: unknown): Promise<TSelect | null> {
     const col = (this.table as any)[field]
     if (!col) throw new Error(`Unknown field: ${field}`)
-    const rows = await db.select().from(this.table).where(eq(col, value)).limit(1)
+    const rows = await this.db.select().from(this.table).where(eq(col, value)).limit(1)
     return (rows[0] as TSelect | undefined) ?? null
   }
 
   async getAll(where?: SQL): Promise<TSelect[]> {
-    const q = db.select().from(this.table)
+    const q = this.db.select().from(this.table)
     const rows = where ? await q.where(where) : await q
     return rows as TSelect[]
   }
@@ -37,12 +42,12 @@ export abstract class ModelBase<
     const orders = this.buildOrderBy(query.sort)
     const offset = (query.page - 1) * query.pageSize
 
-    const [countRow] = await db
+    const [countRow] = await this.db
       .select({ total: sql<number>`cast(count(*) as int)` })
       .from(this.table)
       .where(where)
 
-    const rows = await db
+    const rows = await this.db
       .select()
       .from(this.table)
       .where(where)
@@ -89,7 +94,7 @@ export abstract class ModelBase<
 
   async save(data: TInsert, id?: number): Promise<TSelect> {
     if (id !== undefined) {
-      const rows = await db
+      const rows = await this.db
         .update(this.table)
         .set(data as any)
         .where(eq((this.table as any)['id'], id))
@@ -98,11 +103,11 @@ export abstract class ModelBase<
       if (!row) throw new Error(`Record ${id} not found`)
       return row as TSelect
     }
-    const rows = await db.insert(this.table).values(data as any).returning()
+    const rows = await this.db.insert(this.table).values(data as any).returning()
     return rows[0] as TSelect
   }
 
   async delete(id: number): Promise<void> {
-    await db.delete(this.table).where(eq((this.table as any)['id'], id))
+    await this.db.delete(this.table).where(eq((this.table as any)['id'], id))
   }
 }

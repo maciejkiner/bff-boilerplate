@@ -78,7 +78,7 @@ export function FormController<T extends { id?: number }>({
           )
         }
 
-        if (field.type === 'textarea') {
+        if (field.type === 'textarea' || field.type === 'richtext') {
           return (
             <TextareaField
               key={field.name}
@@ -90,6 +90,33 @@ export function FormController<T extends { id?: number }>({
               error={error}
               onChange={v => set(field.name, v)}
             />
+          )
+        }
+
+        if (field.type === 'date') {
+          return (
+            <TextField
+              key={field.name}
+              name={field.name}
+              label={field.label}
+              type="date"
+              placeholder={field.placeholder}
+              required={field.required}
+              value={String(value ?? '')}
+              error={error}
+              onChange={v => set(field.name, v)}
+            />
+          )
+        }
+
+        if (field.type === 'computed' || field.type === 'array' || field.type === 'group' || field.type === 'relation') {
+          return (
+            <div key={field.name} className="form-field form-field--unsupported">
+              <label>{field.label}</label>
+              <span className="form-field__hint">
+                [{field.type} — not rendered; extend FormController to support this type]
+              </span>
+            </div>
           )
         }
 

@@ -3,30 +3,29 @@ import { createRoot } from 'react-dom/client'
 import { useFormEngine } from './react/useFormEngine.js'
 import { FormController } from './react/FormController.js'
 
-// Example company for edit mode — remove to test create mode
-const existingCompany = {
-  id: 1,
-  name: 'Acme Ltd.',
-  nip: '123-456-78-90',
-  city: 'Warsaw',
-  street: 'ul. Przykładowa 1',
-  zip_code: '00-001',
+// Example user for edit mode — remove useEffect below to test create mode
+const existingUser = {
+  id:     1,
+  email:  'alice@example.com',
+  name:   'Alice Smith',
+  role:   'user',
+  active: true,
 }
 
 function App() {
   const { engine, state } = useFormEngine({
-    endpoint: '/companies',
+    endpoint:  '/users',
     onSuccess: (data, mode) => console.log(`${mode}:`, data),
   })
 
   // Comment out to test create mode
-  useEffect(() => { engine.load(existingCompany) }, [engine])
+  useEffect(() => { engine.load(existingUser) }, [engine])
 
   return (
     <main>
-      <h1>{existingCompany ? 'Edit Company' : 'New Company'}</h1>
-      {state === 'created' && <p className="success">Company created!</p>}
-      {state === 'updated' && <p className="success">Company updated!</p>}
+      <h1>{existingUser ? 'Edit User' : 'New User'}</h1>
+      {state === 'created' && <p className="success">User created!</p>}
+      {state === 'updated' && <p className="success">User updated!</p>}
       <FormController engine={engine} />
     </main>
   )

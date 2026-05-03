@@ -88,8 +88,15 @@ List endpoints always include `meta` with pagination info.
 
 ```bash
 cp .env.example .env
-# edit DATABASE_URL, JWT_SECRET if needed
 ```
+
+Open `.env` and set `JWT_SECRET` to a strong random value:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**Important:** `.env.example` contains `localhost:5432` for the database host. If you run the server with Docker (`docker-compose up`), change it to `db:5432` (the service name inside the Docker network). If you run the server directly with `npm run dev`, keep `localhost:5432`.
 
 ### 2. Start with Docker
 
@@ -119,7 +126,7 @@ curl http://localhost:3000/health
 http://localhost:3000/static/index.html
 ```
 
-Shows a companies form in edit mode (pre-populated). Comment out the `engine.load()` call in `client/src/index.tsx` to test create mode.
+Shows a user form in edit mode (pre-populated with a sample user). Comment out the `engine.load()` call in `client/src/index.tsx` to test create mode.
 
 ---
 
@@ -689,6 +696,38 @@ npm run dev -w server     # server only
 npm run dev -w client     # client only
 npm run build -w server
 npm run build -w client
+```
+
+---
+
+## Testing
+
+```bash
+cd server
+npm test                  # in-memory tests only (no DB required) — ~19 tests
+```
+
+Integration tests require a running Postgres instance:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/bff \
+JWT_SECRET=any-local-secret \
+npm test
+```
+
+Or spin up the DB via Docker and run:
+
+```bash
+docker-compose up -d db
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/bff_db \
+JWT_SECRET=any-local-secret \
+npm test
+```
+
+Without `DATABASE_URL`, integration tests auto-skip (`describe.skipIf`). The in-memory form/workflow tests always run. To run a single test file:
+
+```bash
+npx vitest run src/__tests__/user-form.test.ts
 ```
 
 ---

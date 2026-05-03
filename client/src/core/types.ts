@@ -1,4 +1,6 @@
-export type FieldType = 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
+export type FieldType =
+  | 'text' | 'email' | 'url' | 'number' | 'boolean' | 'select' | 'textarea'
+  | 'date' | 'richtext' | 'relation' | 'computed' | 'array' | 'group'
 
 export interface FieldConfig {
   name:         string

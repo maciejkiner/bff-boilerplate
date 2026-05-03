@@ -102,6 +102,10 @@ export class SubmissionModel extends ModelBase<typeof form_submissions, FormSubm
     return result
   }
 
+  override async delete(id: number): Promise<void> {
+    await this.softDelete(id)
+  }
+
   async softDelete(id: number, changedBy?: number | null): Promise<void> {
     await db
       .update(this.table)

@@ -1,5 +1,8 @@
 node_modules
 dist
 .env
+*.env.local
 drizzle
 *.log
+coverage
+.DS_Store
