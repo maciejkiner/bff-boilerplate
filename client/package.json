@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.tsx --bundle --outfile=dist/app.js --format=esm --sourcemap",
+    "build": "esbuild src/index.tsx --bundle --outfile=dist/app.js --format=esm --sourcemap && esbuild src/admin.css --bundle --outfile=dist/admin.css",
     "dev": "esbuild src/index.tsx --bundle --outfile=dist/app.js --format=esm --sourcemap --watch"
   },
   "dependencies": {
