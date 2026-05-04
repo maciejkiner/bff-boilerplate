@@ -1,11 +1,15 @@
-import type { Hono } from 'hono'
+import type { Hono, Context } from 'hono'
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm'
 import { db } from '../../db/index.js'
 import { audit_events } from '../../db/schema.js'
-import { ok, okPaged } from '../routing/response.js'
+import { ok, okPaged, fail } from '../routing/response.js'
+import type { AuthUser } from '../../middleware/auth.js'
 
 export function mountAuditRoutes(app: Hono, basePath = '/audit'): void {
-  app.get(basePath, async (ctx) => {
+  app.get(basePath, async (ctx: Context) => {
+    const user = ctx.get('user') as AuthUser | undefined
+    if (user?.role !== 'admin') return ctx.json(fail({ _root: ['Forbidden'] }), 403)
+
     const { entity, entityId, action, userId, from, to } = ctx.req.query()
     const page     = Math.max(1, Number(ctx.req.query('page')     ?? 1))
     const pageSize = Math.min(100, Math.max(1, Number(ctx.req.query('pageSize') ?? 20)))
@@ -38,13 +42,17 @@ export function mountAuditRoutes(app: Hono, basePath = '/audit'): void {
     return ctx.json(okPaged(rows, { total, page, pageSize, hasNext: page * pageSize < total }))
   })
 
-  app.get(`${basePath}/:entityType/:entityId`, async (ctx) => {
-    const { entityType, entityId } = ctx.req.param()
+  app.get(`${basePath}/:entityType/:entityId`, async (ctx: Context) => {
+    const user = ctx.get('user') as AuthUser | undefined
+    if (user?.role !== 'admin') return ctx.json(fail({ _root: ['Forbidden'] }), 403)
+
+    const entityType = ctx.req.param('entityType')
+    const entityId   = ctx.req.param('entityId')
     const rows = await db
       .select()
       .from(audit_events)
       .where(and(
-        eq(audit_events.entity_type, entityType),
+        eq(audit_events.entity_type, entityType!),
         eq(audit_events.entity_id,   Number(entityId)),
       ))
       .orderBy(desc(audit_events.timestamp))

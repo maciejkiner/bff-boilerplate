@@ -34,6 +34,63 @@ export const form_submission_versions = pgTable('form_submission_versions', {
   index('fsv_submission_idx').on(t.submission_id),
 ])
 
+// ── Auth tables ───────────────────────────────────────────────────────────────
+
+/** Local email+password credentials — separate from user identity. */
+export const user_credentials = pgTable('user_credentials', {
+  user_id:       integer('user_id').notNull().unique(),
+  password_hash: varchar('password_hash', { length: 255 }).notNull(),
+  updated_at:    timestamp('updated_at').defaultNow().notNull(),
+})
+
+/** Long-lived refresh tokens for JWT rotation. */
+export const refresh_tokens = pgTable('refresh_tokens', {
+  id:         serial('id').primaryKey(),
+  user_id:    integer('user_id').notNull(),
+  token_hash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  expires_at: timestamp('expires_at').notNull(),
+  revoked_at: timestamp('revoked_at'),
+  created_at: timestamp('created_at').defaultNow().notNull(),
+}, t => [
+  index('rt_user_idx').on(t.user_id),
+  index('rt_hash_idx').on(t.token_hash),
+])
+
+/** Short-lived access token JTIs that have been revoked before expiry. */
+export const revoked_jtis = pgTable('revoked_jtis', {
+  jti:        varchar('jti', { length: 36 }).primaryKey(),
+  expires_at: timestamp('expires_at').notNull(),
+})
+
+/** API keys for machine-to-machine auth. Only the SHA-256 hash is stored. */
+export const api_keys = pgTable('api_keys', {
+  id:         serial('id').primaryKey(),
+  key_hash:   varchar('key_hash', { length: 64 }).notNull().unique(),
+  user_id:    integer('user_id').notNull(),
+  role:       varchar('role', { length: 50 }).notNull().default('api'),
+  label:      varchar('label', { length: 255 }),
+  expires_at: timestamp('expires_at'),
+  revoked_at: timestamp('revoked_at'),
+  last_used:  timestamp('last_used'),
+  created_at: timestamp('created_at').defaultNow().notNull(),
+}, t => [
+  index('ak_user_idx').on(t.user_id),
+])
+
+/** OAuth accounts linked to local users. */
+export const oauth_accounts = pgTable('oauth_accounts', {
+  id:          serial('id').primaryKey(),
+  user_id:     integer('user_id').notNull(),
+  provider:    varchar('provider',    { length: 50  }).notNull(),
+  provider_id: varchar('provider_id', { length: 255 }).notNull(),
+  email:       varchar('email',       { length: 255 }),
+  name:        varchar('name',        { length: 255 }),
+  created_at:  timestamp('created_at').defaultNow().notNull(),
+}, t => [
+  index('oa_provider_idx').on(t.provider, t.provider_id),
+  index('oa_user_idx').on(t.user_id),
+])
+
 export const form_submissions = pgTable('form_submissions', {
   id:         serial('id').primaryKey(),
   form_name:  varchar('form_name',  { length: 100 }).notNull(),

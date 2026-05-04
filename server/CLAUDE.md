@@ -12,7 +12,11 @@ npm run db:migrate     # drizzle-kit migrate
 npm run db:studio      # Drizzle Studio GUI
 ```
 
-Always run `npm run build` after any change to verify types. There is no test runner configured — use `tsx` to run individual test files directly.
+Always run `npm run build` after any change to verify types.
+
+```bash
+npm test                # vitest run (unit + integration; integration skips when DATABASE_URL is unset)
+```
 
 ## Architecture
 
@@ -29,8 +33,9 @@ Three entry points for app builders:
 ```
 src/
   core/
+    auth/           AuthProvider interface, createAuthMiddleware, providers/, AuthPolicy, issueTokens
     form/           FormDefinition, validateForm, handleForm, field builders, messages
-    crud/           BaseCrud, listQuery (filter/sort/page parsing)
+    crud/           BaseCrud, TenantBaseCrud, listQuery (filter/sort/page parsing)
     model/          ModelBase (Drizzle generic CRUD base)
     submission/     SubmissionModel, SubmissionResource, types
     workflow/       defineWorkflow, WorkflowRegistry, WorkflowScheduler, guards
@@ -38,9 +43,11 @@ src/
     audit/          AuditLogger, AuditRoutes
     validators/     ValidatorRegistry, built-in validators (nip, pesel, iban, …)
     testing/        FormTestKit, WorkflowTestKit, IntegrationTestKit, snapshot utils
-  resources/        one folder per domain resource (model + form + resource)
+  resources/
+    auth/           authRoutes.ts (login/register/logout/refresh/me/change-password), oauthRoutes.ts
+    users/          example resource (model + form + resource)
   db/               schema.ts (Drizzle table definitions), index.ts (db instance)
-  middleware/       auth.ts (JWT), errorHandler.ts
+  middleware/       auth.ts (re-exports from core/auth — kept for backwards compat), errorHandler.ts
   index.ts          app entry — wires middleware, registry, workflows, audit routes
 ```
 
@@ -203,9 +210,65 @@ workflows.mount(app)
 
 ## Auth
 
-`authMiddleware` (JWT Bearer) is applied to all routes except `/health` and `/static/*` in `index.ts`. `ctx.get('user')` returns `{ id: number; role: string }` or `undefined`. JWT is signed with `process.env.JWT_SECRET`.
+Auth uses a **plugin provider chain**. `app.ts` applies a global `authMiddleware` built from one or more `AuthProvider` implementations. Providers are tried in order — first non-null result wins; a thrown error short-circuits with 401.
 
-For integration tests, use `seed.createUser({ role: 'admin' })` which signs a token with the same secret without needing a database row.
+```typescript
+import { createAuthMiddleware, JwtAuthProvider, ApiKeyAuthProvider } from './core/auth/index.js'
+
+// Default (JWT only):
+app.use('*', createAuthMiddleware(new JwtAuthProvider(config)))
+
+// JWT + API key fallback:
+app.use('*', createAuthMiddleware(
+  new JwtAuthProvider(config),
+  new ApiKeyAuthProvider(),
+))
+```
+
+**Built-in providers** (`core/auth/providers/`):
+- `JwtAuthProvider` — reads `Authorization: Bearer`, verifies HS256, checks `revoked_jtis` table. Accepts `claimsMap` option to map JWT payload fields onto `AuthUser`.
+- `ApiKeyAuthProvider` — reads `X-API-Key`, SHA-256 hash lookup in `api_keys` table.
+- `LocalAuthProvider` — reads `{ email, password }` JSON body, bcrypt compare against `user_credentials`. **Use only on the login endpoint**, not in the global chain.
+
+**Token lifecycle** (`core/auth/issueTokens.ts`):
+- `issueTokenPair(userId, role, extra?)` — issues short-lived access token (default 15 min) + long-lived refresh token (default 7 days, stored as SHA-256 hash).
+- `refreshAccessToken(rawToken)` — rotation: revokes used token, re-fetches user, issues new access token.
+- `revokeJti`, `revokeRefreshToken`, `revokeAllUserTokens`, `cleanupExpiredJtis`.
+
+**Auth endpoints** (mounted publicly in `app.ts` before global auth, via `mountAuthRoutes`):
+```
+POST /auth/register        { email, name, password }         → 201 { user, accessToken, refreshToken }
+POST /auth/login           { email, password }               → 200 { user, accessToken, refreshToken }
+POST /auth/refresh         { refresh_token }                 → 200 { accessToken }
+POST /auth/logout          { refresh_token?, revoke_all? }   → 200  (JWT required)
+GET  /auth/me                                                → 200 { user }  (JWT required)
+POST /auth/change-password { current_password, new_password }→ 200  (JWT required, revokes all tokens)
+```
+
+**OAuth** — scaffold in `resources/auth/oauthRoutes.ts`. Uncomment the provider block and call `mountOAuthRoutes(app)` after installing `arctic`.
+
+**`ctx.get('user')`** returns `AuthUser | undefined` — `{ id: number; role: string; [key: string]: unknown }`. Use `typedAuthUser<MyUser>(ctx)` from `core/auth/index.js` for typed custom claims.
+
+**DB tables added for auth:** `user_credentials`, `refresh_tokens`, `revoked_jtis`, `api_keys`, `oauth_accounts`.
+
+For integration tests, use `seed.createUser({ role: 'admin' })` which signs a token with the same secret without needing a database row. Ensure tokens include `jti`, `exp`, and `iat` claims to match `JwtAuthProvider` expectations.
+
+## Multi-tenancy
+
+Extend `TenantBaseCrud` instead of `BaseCrud`. Set `tenantField` (DB column) and ensure `tenant_id` (or override `tenantIdClaim`) is present in the JWT via `claimsMap`:
+
+```typescript
+export class OrdersResource extends TenantBaseCrud<typeof orders, OrderInsert, Order> {
+  readonly model       = new OrderModel()
+  readonly form        = orderForm
+  readonly tenantField = 'org_id'  // column on `orders` table
+}
+
+// In app.ts wire:
+new JwtAuthProvider(config, { claimsMap: { tenant_id: p => p['tid'] } })
+```
+
+All list/get/create/update/delete calls are automatically scoped to the caller's tenant.
 
 ## Testing Patterns
 

@@ -15,16 +15,28 @@ interface CrudLike {
 type CrudConstructor = new () => CrudLike
 
 export class ResourceRegistry {
-  private resources: Array<{ path: string; Ctor: CrudConstructor }> = []
+  private _resources: Array<{ path: string; Ctor: CrudConstructor }> = []
 
   register(path: string, Ctor: CrudConstructor): this {
-    this.resources.push({ path, Ctor })
+    this._resources.push({ path, Ctor })
     return this
   }
 
+  /** Expose registered resources for OpenAPI generation. */
+  getResources(): ReadonlyArray<{ path: string; Ctor: CrudConstructor }> {
+    return this._resources
+  }
+
   mount(app: Hono): void {
-    for (const { path, Ctor } of this.resources) {
+    const isDev = process.env['NODE_ENV'] !== 'production'
+
+    for (const { path, Ctor } of this._resources) {
       const resource = new Ctor()
+
+      if (isDev && !('policy' in resource && (resource as any).policy != null)) {
+        console.warn(`[AuthPolicy] ${Ctor.name} has no policy — all authenticated users have full access`)
+      }
+
       const base = `/${path}`
 
       // Detect nested pattern: e.g. "companies/:companyId/contacts"
@@ -36,15 +48,15 @@ export class ResourceRegistry {
           ? (ctx: Context) => { ;(ctx as any).set('_parentId', Number(ctx.req.param(parentParam))); return handler(ctx) }
           : handler
 
-      app.get(`${base}/schema`,         wrap(ctx => resource.schema(ctx)))
+      app.get(`${base}/schema`,           wrap(ctx => resource.schema(ctx)))
       app.post(`${base}/schema/evaluate`, wrap(ctx => resource.evaluateSchema(ctx)))
-      app.get(base,               wrap(ctx => resource.list(ctx)))
-      app.get(`${base}/:id`,      wrap(ctx => resource.get(ctx)))
-      app.post(base,              wrap(ctx => resource.create(ctx)))
-      app.post(`${base}/bulk`,    wrap(ctx => resource.bulk(ctx)))
-      app.put(`${base}/:id`,      wrap(ctx => resource.update(ctx)))
-      app.patch(`${base}/:id`,    wrap(ctx => resource.partialUpdate(ctx)))
-      app.delete(`${base}/:id`,   wrap(ctx => resource.delete(ctx)))
+      app.get(base,                       wrap(ctx => resource.list(ctx)))
+      app.get(`${base}/:id`,              wrap(ctx => resource.get(ctx)))
+      app.post(base,                      wrap(ctx => resource.create(ctx)))
+      app.post(`${base}/bulk`,            wrap(ctx => resource.bulk(ctx)))
+      app.put(`${base}/:id`,              wrap(ctx => resource.update(ctx)))
+      app.patch(`${base}/:id`,            wrap(ctx => resource.partialUpdate(ctx)))
+      app.delete(`${base}/:id`,           wrap(ctx => resource.delete(ctx)))
     }
   }
 }

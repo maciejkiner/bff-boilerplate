@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { FormEngine } from '../core/FormEngine.js'
 import { useFormEngine } from './useFormEngine.js'
 import { TextField } from './fields/TextField.js'
@@ -18,22 +17,16 @@ export function FormController<T extends { id?: number }>({
   submitLabel = 'Save',
   fields: fieldOverride,
 }: Props<T>) {
-  const { fields: allFields, errors, isSubmitting, state, autosaving, lastSaved } = useFormEngine<T>(engine)
+  const { fields: allFields, errors, values, isSubmitting, state, autosaving, lastSaved } = useFormEngine<T>(engine)
   const fields = fieldOverride ?? allFields
 
-  const [values, setValues] = useState<Record<string, unknown>>(
-    () => ({ ...(engine.values as Record<string, unknown>) })
-  )
-
   const set = (name: string, value: unknown) => {
-    const next = { ...values, [name]: value }
-    setValues(next)
     engine.setValues({ [name]: value } as Partial<T>)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    engine.submit(values as T)
+    engine.submit(engine.values as T)
   }
 
   if (fields.length === 0 && state !== 'error') {
@@ -48,7 +41,7 @@ export function FormController<T extends { id?: number }>({
 
       {fields.map(field => {
         const error = errors[field.name]?.[0]
-        const value = values[field.name]
+        const value = (values as Record<string, unknown>)[field.name]
 
         if (field.type === 'boolean') {
           return (

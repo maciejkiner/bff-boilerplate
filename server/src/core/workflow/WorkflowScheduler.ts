@@ -2,6 +2,7 @@ import { and, eq, isNull, isNotNull } from 'drizzle-orm'
 import { db } from '../../db/index.js'
 import { form_submissions } from '../../db/schema.js'
 import type { WorkflowInstance } from './types.js'
+import { logger } from '../../lib/logger.js'
 
 export class WorkflowScheduler {
   private _timer?: ReturnType<typeof setTimeout>
@@ -52,7 +53,7 @@ export class WorkflowScheduler {
   start(intervalMs = 60_000): this {
     const loop = () => {
       this.checkTimeouts()
-        .catch(e => console.error('[WorkflowScheduler] checkTimeouts failed:', e))
+        .catch(e => logger.error({ err: e }, '[WorkflowScheduler] checkTimeouts failed'))
         .finally(() => { this._timer = setTimeout(loop, intervalMs) })
     }
     loop()

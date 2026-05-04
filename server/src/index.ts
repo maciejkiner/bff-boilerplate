@@ -1,21 +1,26 @@
 import 'dotenv/config'
-import { serve } from '@hono/node-server'
-import { app } from './app.js'
-import { validateJwtSecret } from './middleware/auth.js'
+import { config } from './config.js'
+import { serve }  from '@hono/node-server'
+import { app }    from './app.js'
+import { closeDb } from './db/index.js'
 
-validateJwtSecret()
+const server = serve({ fetch: app.fetch, port: config.PORT })
 
-const port = Number(process.env['PORT'] ?? 3000)
+console.log(`Server running on http://localhost:${config.PORT}`)
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received — shutting down')
-  process.exit(0)
-})
+function shutdown(signal: string): void {
+  console.log(`[shutdown] ${signal} received — draining requests…`)
+  server.close(async () => {
+    console.log('[shutdown] All connections closed. Closing DB pool…')
+    await closeDb()
+    console.log('[shutdown] Done.')
+    process.exit(0)
+  })
+  setTimeout(() => {
+    console.error('[shutdown] Forced exit after 30 s')
+    process.exit(1)
+  }, 30_000).unref()
+}
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received — shutting down')
-  process.exit(0)
-})
-
-console.log(`Server running on http://localhost:${port}`)
-serve({ fetch: app.fetch, port })
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT',  () => shutdown('SIGINT'))

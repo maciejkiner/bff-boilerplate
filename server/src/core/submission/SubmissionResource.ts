@@ -8,6 +8,7 @@ import { SubmissionModel } from './SubmissionModel.js'
 import type { FormSubmission, SubmissionStatus } from './types.js'
 import type { WorkflowInstance } from '../workflow/types.js'
 import type { AuditLogger } from '../audit/AuditLogger.js'
+import { logger } from '../../lib/logger.js'
 
 export abstract class SubmissionResource<TValues extends Record<string, unknown> = Record<string, unknown>> {
   abstract readonly formName: string
@@ -211,7 +212,7 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
     // Initialize branch states if the new state has parallel branches
     const initBranches = this.workflow.initBranchStates(result.newState)
     const updated = await this.model.setWorkflowState(id, result.newState, result.assignTo, initBranches)
-    void this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState, ...(result.assignTo !== undefined ? { assigned_to: result.assignTo } : {}) } }).catch(e => console.error('[audit]', e))
+    void this.auditLogger?.log({ entity_id: id, action: 'transition', user_id: this.getUserId(ctx), payload: { transition: action, from: current, to: result.newState, ...(result.assignTo !== undefined ? { assigned_to: result.assignTo } : {}) } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
     return ctx.json(ok(updated))
   }
 
@@ -246,12 +247,12 @@ export abstract class SubmissionResource<TValues extends Record<string, unknown>
       if (!mergeResult.ok) return ctx.json(fail({ _root: [mergeResult.message] }), 422)
       const initBranches = this.workflow.initBranchStates(mergeResult.newState)
       const updated = await this.model.setWorkflowState(id, mergeResult.newState, mergeResult.assignTo, initBranches)
-      void this.auditLogger?.log({ entity_id: id, action: 'branch_merge', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, mergeTransition: result.mergeTransition, newState: mergeResult.newState } }).catch(e => console.error('[audit]', e))
+      void this.auditLogger?.log({ entity_id: id, action: 'branch_merge', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, mergeTransition: result.mergeTransition, newState: mergeResult.newState } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
       return ctx.json(ok(updated))
     }
 
     const updated = await this.model.setBranchStates(id, result.branchStates)
-    void this.auditLogger?.log({ entity_id: id, action: 'branch_transition', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, branchStates: result.branchStates } }).catch(e => console.error('[audit]', e))
+    void this.auditLogger?.log({ entity_id: id, action: 'branch_transition', user_id: this.getUserId(ctx), payload: { branch, branchAction: action, branchStates: result.branchStates } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
     return ctx.json(ok(updated))
   }
 

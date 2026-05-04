@@ -8,6 +8,7 @@
     "dev": "esbuild src/index.tsx --bundle --outfile=dist/app.js --format=esm --sourcemap --watch"
   },
   "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },

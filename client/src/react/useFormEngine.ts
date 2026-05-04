@@ -7,6 +7,7 @@ interface UseFormEngineResult<T extends { id?: number }> {
   state:      FormState
   errors:     Record<string, string[]>
   fields:     FieldConfig[]
+  values:     Partial<T>
   isSubmitting: boolean
   autosaving:   boolean
   lastSaved:    Date | null
@@ -28,7 +29,14 @@ export function useFormEngine<T extends { id?: number }>(
 
   const snap = useSyncExternalStore(
     cb => engine.subscribe(cb),
-    () => ({ state: engine.state, errors: engine.errors, fields: engine.fields, autosaving: engine.autosaving, lastSaved: engine.lastSaved }),
+    () => ({
+      state:      engine.state,
+      errors:     engine.errors,
+      fields:     engine.fields,
+      values:     engine.values,
+      autosaving: engine.autosaving,
+      lastSaved:  engine.lastSaved,
+    }),
   )
 
   return {
@@ -36,6 +44,7 @@ export function useFormEngine<T extends { id?: number }>(
     state:        snap.state,
     errors:       snap.errors,
     fields:       snap.fields,
+    values:       snap.values,
     isSubmitting: snap.state === 'submitting',
     autosaving:   snap.autosaving,
     lastSaved:    snap.lastSaved,

@@ -9,3 +9,5 @@ const client = postgres(process.env['DATABASE_URL']!, {
 })
 export const db = drizzle(client, { schema })
 export type Db = typeof db
+
+export const closeDb = (): Promise<void> => client.end()

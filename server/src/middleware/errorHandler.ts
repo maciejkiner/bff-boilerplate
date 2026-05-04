@@ -1,5 +1,6 @@
 import type { ErrorHandler } from 'hono'
 import { fail } from '../core/routing/index.js'
+import { logger } from '../lib/logger.js'
 
 function pgErrorMessage(code: string): { status: 409 | 422; message: string } | null {
   switch (code) {
@@ -16,6 +17,6 @@ export const errorHandler: ErrorHandler = (err, ctx) => {
     const mapped = pgErrorMessage(pgCode)
     if (mapped) return ctx.json(fail({ _root: [mapped.message] }), mapped.status)
   }
-  console.error(err)
+  logger.error({ err, path: ctx.req.path, method: ctx.req.method }, 'Unhandled error')
   return ctx.json(fail({ _root: ['Internal server error'] }), 500)
 }

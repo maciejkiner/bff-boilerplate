@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import { FormController } from './FormController.js'
 import type { WizardEngine } from '../core/WizardEngine.js'
 
@@ -19,10 +19,11 @@ export function WizardController<T extends object>({ engine, submitLabel = 'Subm
       currentStepIndex: engine.currentStepIndex,
       steps:            engine.steps,
       fields:           engine.fields,
+      values:           engine.values,
     }),
   )
 
-  const step             = snap.steps[snap.currentStepIndex]
+  const step              = snap.steps[snap.currentStepIndex]
   const currentStepFields = step
     ? snap.fields.filter(f => step.fields.includes(f.name))
     : snap.fields
@@ -31,21 +32,14 @@ export function WizardController<T extends object>({ engine, submitLabel = 'Subm
   const isSaving     = snap.state === 'saving'
   const isSubmitting = snap.state === 'submitting'
 
-  const [values, setValues] = useState<Record<string, unknown>>(
-    () => ({ ...(engine.values as Record<string, unknown>) })
-  )
-
-  const set = (name: string, value: unknown) =>
-    setValues(prev => ({ ...prev, [name]: value }))
-
   const handleNext = (e: React.FormEvent) => {
     e.preventDefault()
-    engine.nextStep(values as Partial<TT>)
+    engine.nextStep(engine.values as Partial<TT>)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    engine.submitFinal(values as Partial<TT>)
+    engine.submitFinal(engine.values as Partial<TT>)
   }
 
   if (snap.state === 'submitted') {

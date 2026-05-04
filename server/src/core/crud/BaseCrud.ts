@@ -2,12 +2,15 @@ import type { Context } from 'hono'
 import type { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import type { ModelBase } from '../model/ModelBase.js'
 import type { FormContext, FormDefinition, ValidationContext } from '../form/types.js'
+import type { AuthUser } from '../../middleware/auth.js'
+import { AuthPolicy } from '../auth/AuthPolicy.js'
 import { handleForm } from '../form/handleForm.js'
 import { defineForm } from '../form/FormDefinition.js'
 import { validateForm } from '../form/validateForm.js'
 import { ok, okPaged, fail } from '../routing/response.js'
 import { parseListQuery, type ListQuery } from './listQuery.js'
 import type { AuditLogger } from '../audit/AuditLogger.js'
+import { logger } from '../../lib/logger.js'
 import { db } from '../../db/index.js'
 
 const BULK_MAX = 100
@@ -20,11 +23,20 @@ export abstract class BaseCrud<
   abstract readonly model: ModelBase<TTable, TInput, TSelect>
   abstract readonly form:  FormDefinition<TInput>
   protected readonly auditLogger?: AuditLogger
+  protected readonly policy?: AuthPolicy
+  /** Set to true to soft-delete via `deleted_at` instead of hard-deleting. Requires `deleted_at` on the table. */
+  protected readonly softDelete: boolean = false
 
   /** DB column name for parent FK when mounted as a nested resource, e.g. `'company_id'` */
   protected readonly parentField?: string
 
+  private deny(ctx: Context): Response {
+    return ctx.json(fail({ _root: ['Forbidden'] }), 403)
+  }
+
   async list(ctx: Context): Promise<Response> {
+    const user = this.getUser(ctx) as AuthUser | undefined
+    if (this.policy && !this.policy.canList(user)) return this.deny(ctx)
     const fCtx     = this.buildFormContext(ctx)
     const fields   = this.parseFields(ctx)
     const raw      = parseListQuery(ctx.req.url)
@@ -48,15 +60,18 @@ export abstract class BaseCrud<
   }
 
   async get(ctx: Context): Promise<Response> {
+    const user   = this.getUser(ctx) as AuthUser | undefined
     const id     = Number(ctx.req.param('id'))
     const fields = this.parseFields(ctx)
     const row    = await this.model.get(id)
     if (!row) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    if (this.policy && !this.policy.canRead(user, row as Record<string, unknown>)) return this.deny(ctx)
     return ctx.json(ok(this.shapeOutput(this.form.toRedacted(row, this.buildFormContext(ctx)), fields)))
   }
 
   async create(ctx: Context): Promise<Response> {
     const user     = this.getUser(ctx)
+    if (this.policy && !this.policy.canCreate(user as AuthUser | undefined)) return this.deny(ctx)
     const fields   = this.parseFields(ctx)
     const raw      = await ctx.req.json()
     let   body     = await this.beforeCreate(raw, ctx)
@@ -69,23 +84,33 @@ export abstract class BaseCrud<
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     const { data: created } = result as { state: 'created'; data: TSelect }
     await this.afterCreate(created, ctx)
-    void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => console.error('[audit]', e))
-    return ctx.json(ok(this.shapeOutput(created, fields)), 201)
+    void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
+    return ctx.json(ok(this.shapeOutput(this.form.toRedacted(created, this.buildFormContext(ctx)), fields)), 201)
   }
 
   async update(ctx: Context): Promise<Response> {
     const id     = Number(ctx.req.param('id'))
     const user   = this.getUser(ctx)
     const fields = this.parseFields(ctx)
-    const before = this.auditLogger ? await this.model.get(id) : undefined
+    const before = this.policy || this.auditLogger ? await this.model.get(id) : undefined
+    if (before === null) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    if (this.policy && before && !this.policy.canUpdate(user as AuthUser | undefined, before as Record<string, unknown>)) return this.deny(ctx)
     const raw    = await ctx.req.json()
+    // Optimistic locking: if caller sends _version, compare with stored record
+    if (raw !== null && typeof raw === 'object' && '_version' in raw) {
+      const stored = before ?? await this.model.get(id)
+      const storedVersion = (stored as Record<string, unknown> | null)?.['version']
+      if (storedVersion !== undefined && storedVersion !== raw['_version']) {
+        return ctx.json(fail({ _root: ['Record was modified by another request — refresh and retry'] }), 409)
+      }
+    }
     const body   = await this.beforeUpdate(id, raw, ctx)
     const result = await handleForm(this.form, this.model, body, id, this.getValidationContext(ctx), user)
     if (result.state === 'error') return ctx.json(fail(result.errors), 422)
     const { data: updated } = result as { state: 'updated'; data: TSelect }
     await this.afterUpdate(updated, ctx)
-    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before, after: updated } }).catch(e => console.error('[audit]', e))
-    return ctx.json(ok(this.shapeOutput(updated, fields)))
+    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before, after: updated } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
+    return ctx.json(ok(this.shapeOutput(this.form.toRedacted(updated, this.buildFormContext(ctx)), fields)))
   }
 
   async partialUpdate(ctx: Context): Promise<Response> {
@@ -94,6 +119,7 @@ export abstract class BaseCrud<
     const fields   = this.parseFields(ctx)
     const existing = await this.model.get(id)
     if (!existing) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    if (this.policy && !this.policy.canUpdate(user as AuthUser | undefined, existing as Record<string, unknown>)) return this.deny(ctx)
 
     const raw  = await ctx.req.json()
     const body = await this.beforeUpdate(id, raw, ctx)
@@ -113,8 +139,8 @@ export abstract class BaseCrud<
     const patch  = Object.fromEntries(sentFields.map(f => [f.name, (result.data as Record<string, unknown>)[f.name]]))
     const saved  = await this.model.save(patch as TInput, id)
     await this.afterUpdate(saved, ctx)
-    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before: existing, patch: sent, after: saved } }).catch(e => console.error('[audit]', e))
-    return ctx.json(ok(this.shapeOutput(saved, fields)))
+    void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { before: existing, patch: sent, after: saved } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
+    return ctx.json(ok(this.shapeOutput(this.form.toRedacted(saved, this.buildFormContext(ctx)), fields)))
   }
 
   async delete(ctx: Context): Promise<Response> {
@@ -122,9 +148,14 @@ export abstract class BaseCrud<
     const user = this.getUser(ctx)
     const row  = await this.model.get(id)
     if (!row) return ctx.json(fail({ _root: ['Not found'] }), 404)
+    if (this.policy && !this.policy.canDelete(user as AuthUser | undefined, row as Record<string, unknown>)) return this.deny(ctx)
     await this.beforeDelete(id, ctx)
-    await this.model.delete(id)
-    void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => console.error('[audit]', e))
+    if (this.softDelete) {
+      await this.model.softDelete(id)
+    } else {
+      await this.model.delete(id)
+    }
+    void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
     return new Response(null, { status: 204 })
   }
 
@@ -178,7 +209,7 @@ export abstract class BaseCrud<
             if (result.state === 'error') throw Object.assign(new Error('validation'), { validationErrors: result.errors })
             const { data: created } = result as { state: 'created'; data: TSelect }
             await this.afterCreate(created, ctx)
-            void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => console.error('[audit]', e))
+            void this.auditLogger?.log({ entity_id: created.id, action: 'create', user_id: user?.id ?? null, payload: { after: created } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
             results.push({ op: 'create', data: created })
           } else if (entry.op === 'update') {
             const id   = entry.id!
@@ -187,7 +218,7 @@ export abstract class BaseCrud<
             if (result.state === 'error') throw Object.assign(new Error('validation'), { validationErrors: result.errors })
             const { data: updated } = result as { state: 'updated'; data: TSelect }
             await this.afterUpdate(updated, ctx)
-            void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { after: updated } }).catch(e => console.error('[audit]', e))
+            void this.auditLogger?.log({ entity_id: id, action: 'update', user_id: user?.id ?? null, payload: { after: updated } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
             results.push({ op: 'update', data: updated })
           } else {
             const id  = entry.id!
@@ -195,7 +226,7 @@ export abstract class BaseCrud<
             if (!row) throw Object.assign(new Error('not_found'), { notFoundId: id })
             await this.beforeDelete(id, ctx)
             await this.model.delete(id)
-            void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => console.error('[audit]', e))
+            void this.auditLogger?.log({ entity_id: id, action: 'delete', user_id: user?.id ?? null, payload: { before: row } }).catch(e => logger.error({ err: e }, '[audit] log failed'))
             results.push({ op: 'delete', id })
           }
         }
@@ -243,9 +274,13 @@ export abstract class BaseCrud<
   protected pruneListQuery(query: ListQuery): ListQuery {
     const filterable = new Set(this.form.fields.filter(f => f.type !== 'computed' && f.type !== 'group' && f.filterable).map(f => f.name))
     const sortable   = new Set(this.form.fields.filter(f => f.type !== 'computed' && f.type !== 'group' && f.sortable).map(f => f.name))
+    const baseFilters = query.filters.filter(f => filterable.has(f.field))
+    const softDeleteFilter: typeof query.filters = this.softDelete
+      ? [{ field: 'deleted_at', op: 'isNull', value: '' }]
+      : []
     return {
       ...query,
-      filters: query.filters.filter(f => filterable.has(f.field)),
+      filters: [...softDeleteFilter, ...baseFilters],
       sort:    query.sort.filter(s => sortable.has(s.field)),
     }
   }

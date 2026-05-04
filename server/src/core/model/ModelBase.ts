@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, gte, inArray, isNull, like, lt, lte, ne, sql, S
 import { PgTableWithColumns } from 'drizzle-orm/pg-core'
 import { db as defaultDb } from '../../db/index.js'
 import type { FilterClause, ListQuery, SortClause } from '../crud/listQuery.js'
+import { logger } from '../../lib/logger.js'
 
 export abstract class ModelBase<
   TTable extends PgTableWithColumns<any>,
@@ -63,7 +64,7 @@ export abstract class ModelBase<
     for (const f of filters) {
       const col = (this.table as any)[f.field]
       if (!col) {
-        console.warn(`[ModelBase] Unknown filter field '${f.field}' — filter ignored`)
+        logger.warn(`[ModelBase] Unknown filter field '${f.field}' — filter ignored`)
         continue
       }
       switch (f.op) {
@@ -85,7 +86,7 @@ export abstract class ModelBase<
     return sort.flatMap(s => {
       const col = (this.table as any)[s.field]
       if (!col) {
-        console.warn(`[ModelBase] Unknown sort field '${s.field}' — sort ignored`)
+        logger.warn(`[ModelBase] Unknown sort field '${s.field}' — sort ignored`)
         return []
       }
       return [s.dir === 'desc' ? desc(col) : asc(col)]
@@ -109,5 +110,12 @@ export abstract class ModelBase<
 
   async delete(id: number): Promise<void> {
     await this.db.delete(this.table).where(eq((this.table as any)['id'], id))
+  }
+
+  /** Soft-delete by setting `deleted_at`. Requires a `deleted_at` column on the table. */
+  async softDelete(id: number): Promise<void> {
+    const col = (this.table as any)['deleted_at']
+    if (!col) throw new Error(`${this.constructor.name}: table has no 'deleted_at' column`)
+    await this.db.update(this.table).set({ deleted_at: new Date() } as any).where(eq((this.table as any)['id'], id))
   }
 }
