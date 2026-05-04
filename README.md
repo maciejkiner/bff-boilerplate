@@ -58,14 +58,14 @@ client/                      FRONTEND
 ### Request flow
 
 ```
-POST /companies
+POST /users
   → Hono router
-  → CompaniesResource.create()        (inherits from BaseCrud)
-  → handleForm(companyForm, model, body)
+  → UsersResource.create()        (inherits from BaseCrud)
+  → handleForm(userForm, model, body)
       → Zod validation
       → unique constraint checks
       → model.save(data)
-  → { ok: true, data: Company }
+  → { ok: true, data: User }
 ```
 
 ### Response envelope
@@ -190,8 +190,7 @@ export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
 import { UsersResource } from './resources/users/resource.js'
 
 registry
-  .register('companies', CompaniesResource)
-  .register('users', UsersResource)   // ← add this
+  .register('users', UsersResource)
   .mount(app)
 ```
 
@@ -213,9 +212,9 @@ DELETE /users/:id
 `PATCH /:resource/:id` validates and saves **only the fields present in the request body**, merging them with the existing record. Cross-field rules are applied only when all their referenced fields are included.
 
 ```bash
-PATCH /companies/1
-{ "city": "Kraków" }
-# validates only the 'city' field, updates only that column
+PATCH /users/1
+{ "name": "Jan Kowalski" }
+# validates only the 'name' field, updates only that column
 ```
 
 ---
@@ -227,8 +226,8 @@ All `GET /:resource` list endpoints support filtering, sorting, and offset-based
 ### Filtering
 
 ```
-GET /companies?filter[name][like]=acme
-GET /companies?filter[city]=Warsaw&filter[name][like]=tech
+GET /users?filter[name][like]=jan
+GET /users?filter[role]=admin&filter[name][like]=ko
 ```
 
 Supported operators:
@@ -247,15 +246,15 @@ Unknown fields and invalid operators are silently ignored.
 ### Sorting
 
 ```
-GET /companies?sort=name           # ascending
-GET /companies?sort=-createdAt     # descending
-GET /companies?sort=-createdAt,name  # multiple
+GET /users?sort=name           # ascending
+GET /users?sort=-createdAt     # descending
+GET /users?sort=-createdAt,name  # multiple
 ```
 
 ### Pagination
 
 ```
-GET /companies?page=2&pageSize=10
+GET /users?page=2&pageSize=10
 ```
 
 Defaults: `page=1`, `pageSize=20`. Maximum `pageSize` is 100.
@@ -277,31 +276,30 @@ Response includes a `meta` object:
 Override any hook in your resource subclass to inject behaviour at each stage. `before*` hooks receive and return data — return a modified copy to transform the payload, or throw to abort. `after*` hooks are fire-and-forget.
 
 ```ts
-export class CompaniesResource extends BaseCrud<typeof companies, CompanyInsert, Company> {
-  readonly model = new CompanyModel()
-  readonly form  = companyForm
+export class UsersResource extends BaseCrud<typeof users, UserInsert, User> {
+  readonly model = new UserModel()
+  readonly form  = userForm
 
-  // Scope list to current user's tenant
+  // Scope list to active users only
   protected override async beforeList(query: ListQuery, ctx: Context) {
-    const tenantId = ctx.get('tenantId') as string
-    return { ...query, filters: [...query.filters, { field: 'tenant_id', op: 'eq' as const, value: tenantId }] }
+    return { ...query, filters: [...query.filters, { field: 'active', op: 'eq' as const, value: 'true' }] }
   }
 
-  // Inject createdBy before validation
+  // Normalise email before validation
   protected override async beforeCreate(body: unknown, ctx: Context) {
-    const user = ctx.get('user') as { id: number }
-    return { ...(body as object), created_by: user.id }
+    const b = body as Record<string, unknown>
+    return { ...b, email: typeof b['email'] === 'string' ? b['email'].toLowerCase() : b['email'] }
   }
 
-  // Send notification after a record is created
-  protected override async afterCreate(record: Company, _ctx: Context) {
-    await notify(`New company created: ${record.name}`)
+  // Send welcome email after user is created
+  protected override async afterCreate(record: User, _ctx: Context) {
+    await notify(`Welcome ${record.name}!`)
   }
 
-  // Prevent deletion of locked records
+  // Prevent deletion of admin users
   protected override async beforeDelete(id: number, _ctx: Context) {
     const row = await this.model.get(id)
-    if (row?.locked) throw new Error('Cannot delete a locked company')
+    if (row?.role === 'admin') throw new Error('Cannot delete an admin user')
   }
 }
 ```
@@ -582,11 +580,11 @@ Each form automatically exposes a `GET /:resource/schema` endpoint (see [Schema 
 Every registered resource automatically gets a `GET /:resource/schema` endpoint that returns the form field definitions — labels, placeholders, types, required flags — derived directly from the `FormDefinition`.
 
 ```bash
-GET /companies/schema
+GET /users/schema
 # → { "ok": true, "data": [
-#     { "name": "name",     "label": "Company name", "type": "text",  "required": true },
-#     { "name": "nip",      "label": "NIP",          "type": "text",  "placeholder": "000-000-00-00" },
-#     { "name": "city",     "label": "City",         "type": "text" },
+#     { "name": "name",  "label": "Name",  "type": "text",  "required": true },
+#     { "name": "email", "label": "Email", "type": "email", "required": true },
+#     { "name": "role",  "label": "Role",  "type": "select" },
 #     ...
 #   ]}
 ```
@@ -602,15 +600,15 @@ The frontend `FormEngine` fetches this schema automatically on init — no hardc
 The engine fetches the form schema from `/:endpoint/schema` on init, then owns submit logic, state machine, and error mapping. No React dependency.
 
 ```ts
-const engine = new FormEngine<CompanyInsert>({
-  endpoint: '/companies',
+const engine = new FormEngine<UserInsert>({
+  endpoint: '/users',
   onSuccess: (data, mode) => console.log(mode, data), // mode: 'created' | 'updated'
   onError: (errors) => console.error(errors),
   // fields: [...] — optional static override, skips schema fetch
 })
 
-engine.load(existingCompany)         // pre-populate for edit (auto-switches to PUT /:id)
-engine.setValues({ name: 'Acme' })  // merge values + trigger autosave (if configured)
+engine.load(existingUser)            // pre-populate for edit (auto-switches to PUT /:id)
+engine.setValues({ name: 'Jan' })   // merge values + trigger autosave (if configured)
 engine.submit(formValues)            // fetch → state machine → notify subscribers
 engine.reset()                       // back to idle
 ```
@@ -620,12 +618,12 @@ engine.reset()                       // back to idle
 Pass `autosave` config to enable debounced PATCH on every `setValues()` call. Requires a loaded `id` (i.e. call `engine.load(existing)` first).
 
 ```ts
-const engine = new FormEngine<CompanyInsert>({
-  endpoint:  '/companies',
+const engine = new FormEngine<UserInsert>({
+  endpoint:  '/users',
   autosave:  { delay: 1500 },   // ms, default 2000
   onSuccess: (data) => console.log('saved', data),
 })
-engine.load(existingCompany)    // sets values.id → autosave will PATCH /:id
+engine.load(existingUser)       // sets values.id → autosave will PATCH /:id
 ```
 
 `FormController` automatically shows "Last saved HH:MM:SS" and a "Saving…" indicator when autosave is active.
@@ -634,13 +632,13 @@ engine.load(existingCompany)    // sets values.id → autosave will PATCH /:id
 
 ```tsx
 function MyForm() {
-  const { engine, state, autosaving, lastSaved } = useFormEngine<CompanyInsert>({
-    endpoint: '/companies',
+  const { engine, state, autosaving, lastSaved } = useFormEngine<UserInsert>({
+    endpoint: '/users',
     autosave: { delay: 2000 },
-    onSuccess: () => navigate('/companies'),
+    onSuccess: () => navigate('/users'),
   })
 
-  useEffect(() => { engine.load(existingCompany) }, [engine])
+  useEffect(() => { engine.load(existingUser) }, [engine])
 
   return <FormController engine={engine} />
 }
@@ -763,7 +761,7 @@ Groups produce a single nested object value (`values.address = { street, city, z
 ```ts
 import { group, text } from './core/form/index.js'
 
-group<CompanyInsert>('address', {
+group<ProfileInsert>('address', {
   label:  'Address',
   fields: [
     text<Address>('street',  { label: 'Street',   required: true }),
@@ -874,11 +872,11 @@ The following are registered automatically when you import from `core/validators
 `POST /:resource/bulk` accepts an array of up to 100 create / update / delete operations executed all-or-nothing:
 
 ```bash
-POST /companies/bulk
+POST /users/bulk
 {
   "operations": [
-    { "op": "create", "data": { "name": "Acme" } },
-    { "op": "update", "id": 5, "data": { "city": "Warsaw" } },
+    { "op": "create", "data": { "name": "Jan Kowalski", "email": "jan@example.com" } },
+    { "op": "update", "id": 5, "data": { "role": "admin" } },
     { "op": "delete", "id": 12 }
   ]
 }
@@ -893,21 +891,21 @@ All operations are validated before any are executed. If any operation fails val
 Register a resource under a parent path — the framework automatically filters by parent ID and validates parent existence:
 
 ```ts
-// server/src/resources/contacts/resource.ts
-export class ContactsResource extends BaseCrud<typeof contacts, ContactInsert, Contact> {
-  readonly model       = new ContactModel()
-  readonly form        = contactForm
-  readonly parentField = 'company_id'   // FK column to inject
+// server/src/resources/posts/resource.ts
+export class PostsResource extends BaseCrud<typeof posts, PostInsert, Post> {
+  readonly model       = new PostModel()
+  readonly form        = postForm
+  readonly parentField = 'user_id'   // FK column to inject
 }
 
 // server/src/index.ts
 registry
-  .register('companies', CompaniesResource)
-  .register('companies/:companyId/contacts', ContactsResource)
+  .register('users', UsersResource)
+  .register('users/:userId/posts', PostsResource)
   .mount(app)
 ```
 
-This gives you `GET /companies/3/contacts` (returns only contacts for company 3), `POST /companies/3/contacts` (injects `company_id: 3` before validation), etc. Override `parentExists()` to add custom parent validation logic.
+This gives you `GET /users/3/posts` (returns only posts for user 3), `POST /users/3/posts` (injects `user_id: 3` before validation), etc. Override `parentExists()` to add custom parent validation logic.
 
 ---
 
@@ -916,11 +914,11 @@ This gives you `GET /companies/3/contacts` (returns only contacts for company 3)
 Append `?fields=` to any list or detail endpoint to receive only the specified columns:
 
 ```bash
-GET /companies?fields=id,name,city
-# → [{ "id": 1, "name": "Acme", "city": "Warsaw" }, ...]
+GET /users?fields=id,name,role
+# → [{ "id": 1, "name": "Jan Kowalski", "role": "admin" }, ...]
 
-GET /companies/1?fields=id,name
-# → { "id": 1, "name": "Acme" }
+GET /users/1?fields=id,name
+# → { "id": 1, "name": "Jan Kowalski" }
 ```
 
 ---
@@ -951,8 +949,8 @@ POST /leave-requests/schema/evaluate
 | `isNull` | column IS NULL (value ignored) |
 
 ```bash
-GET /companies?filter[status][neq]=archived
-GET /companies?filter[city][in]=Warsaw,Kraków,Gdańsk
+GET /users?filter[role][neq]=admin
+GET /users?filter[role][in]=admin,manager
 ```
 
 Fields must have `filterable: true` on their field definition to be accepted; unknown fields are silently ignored.
@@ -964,10 +962,10 @@ Fields must have `filterable: true` on their field definition to be accepted; un
 Every `BaseCrud` create / update / delete and every workflow transition is automatically logged when `auditLogger` is set on the resource. Read the log via the built-in endpoints:
 
 ```bash
-GET /audit                                        # all events, paginated
-GET /audit?entity=companies&action=update         # filtered
+GET /audit                                     # all events, paginated
+GET /audit?entity=users&action=update          # filtered
 GET /audit?userId=5&from=2025-01-01&to=2025-06-01 # date range
-GET /audit/companies/42                           # all events for a specific record
+GET /audit/users/42                            # all events for a specific record
 ```
 
 Query params: `entity`, `entityId`, `action`, `userId`, `from`, `to`, `page`, `pageSize`.
@@ -1137,22 +1135,22 @@ const client = new TestClient(app)
 
 beforeEach(() => testDb.truncateAll())
 
-test('POST /companies requires auth', async () => {
-  const { res } = await client.post('/companies').send({ name: 'Acme' }).json()
+test('POST /users requires auth', async () => {
+  const { res } = await client.post('/users').send({ name: 'Jan', email: 'jan@example.com' }).json()
   expect(res.status).toBe(401)
 })
 
-test('admin can create a company', async () => {
+test('admin can create a user', async () => {
   const admin = await seed.createUser({ role: 'admin' })
-  const { res, body } = await client.post('/companies')
-    .withAuth(admin).send({ name: 'Acme' }).json()
+  const { res, body } = await client.post('/users')
+    .withAuth(admin).send({ name: 'Jan', email: 'jan@example.com' }).json()
   expect(res.status).toBe(201)
-  expect(body.data.name).toBe('Acme')
+  expect(body.data.name).toBe('Jan')
 })
 ```
 
-`seed` helpers: `createUser({ role })`, `createCompany(opts)`, `createSubmission(opts)`.
-`testDb.truncate('companies', 'audit_events')` for targeted cleanup.
+`seed` helpers: `createUser({ role })`, `createSubmission(opts)`.
+`testDb.truncate('users', 'audit_events')` for targeted cleanup.
 
 ### Schema snapshot testing
 
